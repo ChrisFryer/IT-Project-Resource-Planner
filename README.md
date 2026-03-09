@@ -184,6 +184,14 @@ Resource Planner/
 └── .gitignore               # Excludes *.json data files from version control
 ```
 
+## Contributing
+
+Found a bug or have a feature idea?
+
+- **Bug reports**: [Open an issue](https://github.com/ChrisFryer/IT-Project-Resource-Planner/issues/new?labels=bug&template=bug_report.md)
+- **Feature requests**: [Open an issue](https://github.com/ChrisFryer/IT-Project-Resource-Planner/issues/new?labels=enhancement&template=feature_request.md)
+- **Pull requests** are welcome — please open an issue first to discuss the change
+
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
