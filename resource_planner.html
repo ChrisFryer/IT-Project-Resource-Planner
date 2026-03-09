@@ -1829,7 +1829,8 @@ function schedSave() {
 
 // ===================== UTILS =====================
 function parseDate(str) { const [y,m,d]=str.split('-').map(Number); return new Date(y,m-1,d); }
-function weekDate(w) { const d=parseDate(appData.settings.startDate); d.setDate(d.getDate()+w*7); return d; }
+function snapToMonday(d) { const r=new Date(d); const day=r.getDay(); const diff=day===0?-6:1-day; r.setDate(r.getDate()+diff); return r; }
+function weekDate(w) { const d=snapToMonday(parseDate(appData.settings.startDate)); d.setDate(d.getDate()+w*7); return d; }
 function fmtDate(d) { return d.toLocaleDateString('en-AU',{day:'2-digit',month:'short',year:'numeric'}); }
 function fmtDateShort(d) { return d.toLocaleDateString('en-AU',{day:'2-digit',month:'short'}); }
 function fmtISO(d) { return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -1843,8 +1844,8 @@ function getFY(y,m) { return m>=6?'FY'+String(y+1).slice(-2):'FY'+String(y).slic
 
 // Compute resolved phase start/end weeks for a project (sequential or with explicit offsets)
 function resolvePhases(proj) {
-  const psd = parseDate(proj.projectStartDate || appData.settings.startDate);
-  const portfolioStart = parseDate(appData.settings.startDate);
+  const psd = snapToMonday(parseDate(proj.projectStartDate || appData.settings.startDate));
+  const portfolioStart = snapToMonday(parseDate(appData.settings.startDate));
   const projOffset = Math.round(daysBetween(portfolioStart, psd) / 7);
   const phases = getProjectPhases(proj);
   let cursor = 0; // weeks from project start
