@@ -703,7 +703,6 @@ select.form-input{cursor:pointer}
   <button class="btn btn-primary" onclick="newPortfolio()">+ New</button>
   <button class="btn" onclick="renamePortfolio()">Rename</button>
   <button class="btn" style="color:var(--red);border-color:var(--red-bg)" onclick="deletePortfolio()">Delete</button>
-  <button class="btn" onclick="linkFile()" title="Link a JSON file for direct saving" style="font-size:0.75rem">&#128279; Link File</button>
   <span class="portfolio-filename" id="portfolio-filename"></span>
 </div>
 
@@ -1082,7 +1081,7 @@ select.form-input{cursor:pointer}
 
 <script>
 // ===================== VERSION & GITHUB =====================
-const APP_VERSION = '1.0.4';
+const APP_VERSION = '1.0.5';
 const GITHUB_REPO = 'ChrisFryer/IT-Project-Resource-Planner';
 const GITHUB_URL = 'https://github.com/' + GITHUB_REPO;
 const GITHUB_ISSUES_URL = GITHUB_URL + '/issues';
@@ -1415,27 +1414,6 @@ async function saveToFileHandle() {
   }
 }
 
-async function linkFile() {
-  if (!hasFileSystemAccess) {
-    toast('File linking requires Chrome or Edge browser', 'error');
-    return;
-  }
-  try {
-    const [handle] = await window.showOpenFilePicker({
-      types: [{ description: 'JSON Files', accept: { 'application/json': ['.json'] } }],
-      multiple: false
-    });
-    fileHandle = handle;
-    await storeFileHandle(currentPortfolioKey, handle);
-    updateFileStatus();
-    // Immediately save current data to the linked file
-    const saved = await saveToFileHandle();
-    if (saved) toast('File linked and saved: ' + fileHandle.name, 'success');
-  } catch(e) {
-    if (e.name !== 'AbortError') toast('Could not link file: ' + e.message, 'error');
-  }
-}
-
 async function createAndLinkFile() {
   if (!hasFileSystemAccess) {
     toast('File saving requires Chrome or Edge browser', 'error');
@@ -1465,7 +1443,7 @@ function updateFileStatus() {
   } else if (pendingFileHandle) {
     el.innerHTML = '<span style="color:var(--amber);cursor:pointer;font-weight:600" onclick="reconnectFile()" title="Click to re-grant file access">&#128279; Reconnect: ' + pendingFileHandle.name + '</span>';
   } else if (hasFileSystemAccess) {
-    el.innerHTML = '<span style="color:var(--amber);cursor:pointer;font-weight:600" onclick="linkFile()" title="Data is only saved in browser storage. Link a JSON file to enable persistent file saving.">&#9888; No file linked &mdash; click to link</span>';
+    el.innerHTML = '<span style="color:var(--amber);cursor:pointer;font-weight:600" onclick="createAndLinkFile()" title="Data is only saved in browser storage. Click to save as a JSON file.">&#9888; No file linked &mdash; click to save</span>';
   } else {
     el.innerHTML = '<span style="color:var(--amber)" title="Your browser does not support direct file saving. Use Export regularly to back up your data.">&#9888; Use Export to save as JSON</span>';
   }
@@ -1572,7 +1550,7 @@ function showPortfolioFileModal(portfolioName) {
       <h3 style="margin:0 0 0.75rem;color:var(--accent)">Portfolio Created: ${portfolioName}</h3>
       <p style="font-size:0.875rem;color:var(--text2);margin:0 0 1rem">Would you like to save this portfolio to a JSON file? This links the file so <strong>Save (Ctrl+S)</strong> writes directly to it.</p>
       <div style="font-size:0.75rem;color:var(--text3);margin-bottom:1rem">
-        You can also link a file later using the <strong>&#128279; Link File</strong> button in the portfolio bar.
+        You can also save to a file later by clicking the <strong>&#9888; No file linked</strong> prompt in the portfolio bar.
       </div>
       <div style="display:flex;gap:0.5rem;justify-content:flex-end">
         <button class="btn btn-primary" onclick="createAndLinkFile();document.getElementById('portfolio-modal-overlay').remove()">Save JSON File</button>
@@ -3914,6 +3892,14 @@ initPortfolios();
   lastSavedJSON = JSON.stringify(appData);
   renderAll();
   updateFileStatus();
+  // Browser compatibility warning
+  if (!hasFileSystemAccess) {
+    const banner = document.createElement('div');
+    banner.id = 'compat-banner';
+    banner.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:999;background:var(--red);color:#fff;padding:0.625rem 1rem;display:flex;align-items:center;justify-content:center;gap:0.75rem;font-size:0.8125rem;font-weight:500;box-shadow:0 -2px 8px rgba(0,0,0,0.2)';
+    banner.innerHTML = '<span>&#9888; <strong>Limited browser support</strong> &mdash; This app works best in <strong>Chrome</strong> or <strong>Edge</strong>. File saving, auto-save, and file reconnection are not available in your current browser. Use Export/Import to manage your data.</span><button onclick="document.getElementById(\'compat-banner\').remove()" style="background:transparent;border:none;color:rgba(255,255,255,0.8);cursor:pointer;font-size:1.125rem;padding:0 0.25rem;flex-shrink:0" title="Dismiss">&times;</button>';
+    document.body.appendChild(banner);
+  }
 })();
 </script>
 </body>
