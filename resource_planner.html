@@ -1082,7 +1082,7 @@ select.form-input{cursor:pointer}
 
 <script>
 // ===================== VERSION & GITHUB =====================
-const APP_VERSION = '1.0.2';
+const APP_VERSION = '1.0.3';
 const GITHUB_REPO = 'ChrisFryer/IT-Project-Resource-Planner';
 const GITHUB_URL = 'https://github.com/' + GITHUB_REPO;
 const GITHUB_ISSUES_URL = GITHUB_URL + '/issues';
@@ -1318,24 +1318,45 @@ async function removeStoredFileHandle(portfolioName) {
   } catch(e) {}
 }
 
-async function restoreFileHandle(portfolioName) {
+// Retrieve a stored handle from IndexedDB without requesting permission
+async function getStoredHandle(portfolioName) {
   try {
     const db = await openHandleDB();
     const tx = db.transaction(FILE_HANDLE_STORE, 'readonly');
     const req = tx.objectStore(FILE_HANDLE_STORE).get(portfolioName);
     const handle = await new Promise((res, rej) => { req.onsuccess = () => res(req.result); req.onerror = rej; });
     db.close();
-    if (!handle) return null;
-    // Request permission — may show a one-click browser prompt
+    return handle || null;
+  } catch(e) { return null; }
+}
+
+// Request permission on an existing handle (requires user gesture)
+async function requestHandlePermission(handle) {
+  try {
     const perm = await handle.requestPermission({ mode: 'readwrite' });
-    if (perm === 'granted') return handle;
-    // If denied, don't remove — user might grant next time
-    return null;
+    return perm === 'granted';
   } catch(e) {
-    console.warn('Could not restore file handle:', e);
-    return null;
+    console.warn('Could not get file permission:', e);
+    return false;
   }
 }
+
+// Called on user click to reconnect a stored file handle
+async function reconnectFile() {
+  const handle = pendingFileHandle || await getStoredHandle(currentPortfolioKey);
+  if (!handle) { toast('No stored file handle found', 'error'); return; }
+  const granted = await requestHandlePermission(handle);
+  if (granted) {
+    fileHandle = handle;
+    pendingFileHandle = null;
+    updateFileStatus();
+    toast('Reconnected to: ' + handle.name, 'success');
+  } else {
+    toast('File access denied — try again or link a new file', 'error');
+  }
+}
+
+let pendingFileHandle = null; // Handle retrieved from IDB but not yet permitted
 
 async function saveToFileHandle() {
   if (!fileHandle) return false;
@@ -1400,6 +1421,8 @@ function updateFileStatus() {
   if (!el) return;
   if (fileHandle) {
     el.innerHTML = '<span style="color:var(--green)" title="Saving to file on every save">&#128279; ' + fileHandle.name + '</span>';
+  } else if (pendingFileHandle) {
+    el.innerHTML = '<span style="color:var(--amber);cursor:pointer;font-weight:600" onclick="reconnectFile()" title="Click to re-grant file access">&#128279; Reconnect: ' + pendingFileHandle.name + '</span>';
   } else if (hasFileSystemAccess) {
     el.innerHTML = '<span style="color:var(--amber);cursor:pointer;font-weight:600" onclick="linkFile()" title="Data is only saved in browser storage. Link a JSON file to enable persistent file saving.">&#9888; No file linked &mdash; click to link</span>';
   } else {
@@ -1455,9 +1478,14 @@ async function switchPortfolio(name) {
   if (!loaded) {
     await tryLoadFromFile(name);
   }
-  // Try to restore linked file handle for this portfolio
-  const restored = await restoreFileHandle(name);
-  if (restored) fileHandle = restored;
+  // Try to restore linked file handle for this portfolio (user gesture available from dropdown click)
+  pendingFileHandle = null;
+  const stored = await getStoredHandle(name);
+  if (stored) {
+    const granted = await requestHandlePermission(stored);
+    if (granted) { fileHandle = stored; }
+    else { pendingFileHandle = stored; }
+  }
   renderAll();
   renderPortfolioBar();
   toast('Switched to: ' + name, 'info');
@@ -3824,13 +3852,13 @@ initPortfolios();
     }
     renderPortfolioBar();
   }
-  // Restore linked file handle from IndexedDB (persists across refreshes)
+  // Check for a stored file handle from IndexedDB (persists across refreshes)
+  // Don't request permission here — that requires a user gesture
+  // Instead, show a "Reconnect" prompt the user can click
   try {
-    const restored = await restoreFileHandle(currentPortfolioKey);
-    if (restored) {
-      fileHandle = restored;
-      updateFileStatus();
-      toast('Reconnected to: ' + fileHandle.name, 'success');
+    const stored = await getStoredHandle(currentPortfolioKey);
+    if (stored) {
+      pendingFileHandle = stored;
     }
   } catch(e) {}
   lastSavedJSON = JSON.stringify(appData);
