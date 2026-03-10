@@ -509,7 +509,7 @@ select.form-input{cursor:pointer}
 .assignment-proj{font-weight:600;color:var(--accent);min-width:8rem}
 .salary-input{width:6rem;background:var(--surface2);border:1px solid var(--border);border-radius:0.375rem;padding:0.25rem 0.375rem;color:var(--text);font-family:'JetBrains Mono',monospace;font-size:0.8125rem;text-align:right}
 .salary-input:focus{outline:none;border-color:var(--att-teal)}
-.burden-tip{display:none;position:absolute;bottom:calc(100% + 0.5rem);left:50%;transform:translateX(-50%);background:var(--surface);border:1px solid var(--border);border-radius:0.5rem;padding:0.5rem 0.75rem;font-size:0.75rem;font-weight:400;color:var(--text2);white-space:nowrap;z-index:20;box-shadow:0 4px 12px rgba(0,0,0,0.15);min-width:10rem}
+.burden-tip{display:none;position:absolute;bottom:calc(100% + 0.5rem);left:50%;transform:translateX(-50%);background:var(--surface);border:1px solid var(--border);border-radius:0.5rem;padding:0.5rem 0.75rem;font-size:0.75rem;font-weight:400;color:var(--text2);white-space:normal;z-index:20;box-shadow:0 4px 12px rgba(0,0,0,0.15);min-width:10rem;max-width:24rem}
 .burden-tip.show{display:block}
 
 /* ==================== FINANCIALS TAB ==================== */
@@ -1083,7 +1083,7 @@ select.form-input{cursor:pointer}
 
 <script>
 // ===================== VERSION & GITHUB =====================
-const APP_VERSION = '1.0.5';
+const APP_VERSION = '1.0.6';
 const GITHUB_REPO = 'ChrisFryer/IT-Project-Resource-Planner';
 const GITHUB_URL = 'https://github.com/' + GITHUB_REPO;
 const GITHUB_ISSUES_URL = GITHUB_URL + '/issues';
@@ -2585,6 +2585,8 @@ function renderResources() {
         <span style="color:var(--text3)">or</span>
         <span>$/hr: <input class="salary-input" type="number" value="${burden.hourlyRate>0?+burden.hourlyRate.toFixed(2):0}" min="0" step="0.01" style="width:5rem" onchange="setFromHourlyRate(${origIdx},+this.value)"></span>
         <span>Burden cost: <strong style="color:var(--text)">${fmtDollar(burden.annualBurdenCost)}/yr</strong></span>
+        ${burden.hasLeave?`<span style="position:relative;cursor:pointer" onclick="this.querySelector('.burden-tip').classList.toggle('show')">Project cost: <strong style="color:var(--green)">${fmtDollar(burden.projectAnnualCost)}/yr</strong> <span style="color:var(--accent)">&#9432;</span><span class="burden-tip"><div style="margin-bottom:0.375rem;font-weight:600;color:var(--accent)">Project Cost vs Burden Cost</div><div>Burden $/hr: $${burden.hourlyRate.toFixed(2)} &times; ${Math.round(burden.productiveHours)} productive hrs = <strong>${fmtDollar(burden.projectAnnualCost)}/yr</strong></div><div>Full burden cost: <strong>${fmtDollar(burden.annualBurdenCost)}/yr</strong></div><div style="margin-top:0.25rem;color:var(--amber);font-weight:600">Company absorbs: ${fmtDollar(burden.annualBurdenCost - burden.projectAnnualCost)}/yr</div><div style="border-top:1px solid var(--border);margin-top:0.375rem;padding-top:0.375rem;font-size:0.6875rem;color:var(--text3)">Projects are billed at the burden $/hr but only for ${WORKING_DAYS_PER_YEAR} productive days (${Math.round(burden.productiveHours)} hrs). Leave, sick &amp; public holidays (~${Math.round(burden.annualHours - burden.productiveHours)} hrs) are not recoverable from project effort &mdash; the company absorbs this cost.</div></span></span>`:''}
+        ${!burden.hasLeave&&(resType==='contractor'||resType==='contractorPT')?`<span style="position:relative;cursor:pointer" onclick="this.querySelector('.burden-tip').classList.toggle('show')"><strong style="color:var(--text2)">${WORKING_DAYS_PER_YEAR} days/yr</strong> <span style="color:var(--accent)">&#9432;</span><span class="burden-tip"><div style="font-weight:600;color:var(--accent);margin-bottom:0.25rem">${WORKING_DAYS_PER_YEAR} days &times; 8hrs = ${Math.round(WORKING_DAYS_PER_YEAR * 8)} hrs/yr</div><div>No paid leave &mdash; all days are project-recoverable. Actual days may vary with overtime, public holidays, or gaps between engagements.</div></span></span>`:``}
         ${burden.totalBurdenPct>0?`<span style="position:relative;cursor:pointer" onclick="this.querySelector('.burden-tip').classList.toggle('show')">Uplift: <strong>${burden.totalBurdenPct.toFixed(2)}%</strong> <span style="color:var(--accent)">&#9432;</span><span class="burden-tip">${Object.entries(burden.breakdown).map(([k,v])=>'<div style=\\"display:flex;justify-content:space-between;gap:1rem\\"><span>'+k+'</span><strong>'+v.toFixed(2)+'%</strong></div>').join('')}<div style="border-top:1px solid var(--border);margin-top:0.25rem;padding-top:0.25rem;display:flex;justify-content:space-between"><span style=\\"font-weight:700\\">Total</span><strong style=\\"color:var(--accent)\\">${burden.totalBurdenPct.toFixed(2)}%</strong></div></span></span>`:''}
         ${r.notes?`<span>${r.notes}</span>`:''}
       </div>
@@ -2733,7 +2735,7 @@ function calcBurdenRate(resource) {
     const dailyRate = resource.dailyRate || 0;
     const hourlyRate = dailyRate / 8;
     const annualCost = dailyRate * WORKING_DAYS_PER_YEAR;
-    return {hourlyRate, annualBurdenCost:annualCost, totalBurdenPct:0, breakdown:{}, annualHours, type, baseSalary:0, dailyRate};
+    return {hourlyRate, projectAnnualCost:0, productiveHours:annualHours, hasLeave:false, annualBurdenCost:annualCost, totalBurdenPct:0, breakdown:{}, annualHours, type, baseSalary:0, dailyRate};
   }
 
   if (type === 'contractorPT') {
@@ -2743,11 +2745,11 @@ function calcBurdenRate(resource) {
     const roundedPT = Math.round(basePTRate * 100) / 100;
     const hourlyRate = (dailyRate / 8) * (1 + roundedPT / 100);
     const annualCost = dailyRate * WORKING_DAYS_PER_YEAR * (1 + roundedPT / 100);
-    return {hourlyRate, annualBurdenCost:annualCost, totalBurdenPct:roundedPT, breakdown:{'Payroll Tax':roundedPT}, annualHours, type, baseSalary:0, dailyRate};
+    return {hourlyRate, projectAnnualCost:0, productiveHours:annualHours, hasLeave:false, annualBurdenCost:annualCost, totalBurdenPct:roundedPT, breakdown:{'Payroll Tax':roundedPT}, annualHours, type, baseSalary:0, dailyRate};
   }
 
   const salary = resource.salary || 0;
-  if (salary === 0) return {hourlyRate:0, annualBurdenCost:0, totalBurdenPct:0, breakdown:{}, annualHours, type, baseSalary:0, dailyRate:0};
+  if (salary === 0) return {hourlyRate:0, projectHourlyRate:0, productiveHours:annualHours, hasLeave:false, annualBurdenCost:0, totalBurdenPct:0, breakdown:{}, annualHours, type, baseSalary:0, dailyRate:0};
 
   const superRate = bc.superRate || 12.0;
   let breakdown = {};
@@ -2772,7 +2774,14 @@ function calcBurdenRate(resource) {
   const annualBurdenCost = salary * (1 + totalPct / 100);
   const hourlyRate = annualBurdenCost / annualHours;
 
-  return {hourlyRate, annualBurdenCost, totalBurdenPct:totalPct, breakdown, annualHours, type, baseSalary:salary, dailyRate:0};
+  // Project cost: for roles with leave, the project only recovers productive hours at the burden $/hr
+  // Productive hours = 220 working days × (hours per day), excluding leave, sick, and public holidays
+  // 220 days = 260 weekdays − ~20 annual leave − ~10 sick − ~10 public holidays
+  const hasLeave = type === 'permanent';
+  const productiveHours = hasLeave ? annualHours * (WORKING_DAYS_PER_YEAR / 260) : annualHours;
+  const projectAnnualCost = hourlyRate * productiveHours;
+
+  return {hourlyRate, projectAnnualCost, productiveHours, hasLeave, annualBurdenCost, totalBurdenPct:totalPct, breakdown, annualHours, type, baseSalary:salary, dailyRate:0};
 }
 
 // Calculate max salary to maintain a target margin for a given project
