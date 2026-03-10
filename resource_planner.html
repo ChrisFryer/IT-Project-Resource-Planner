@@ -823,11 +823,13 @@ select.form-input{cursor:pointer}
             <select class="form-input" id="res-type" onchange="toggleResTypeFields()">
               <option value="permanent">Permanent</option>
               <option value="casual">Casual / PAYG</option>
+              <option value="contractorPT">Contractor (PT)</option>
               <option value="contractor">RCTI Contractor</option>
             </select>
           </div>
           <div class="form-row" id="res-salary-row"><label>Base Salary (excl. super)</label><input class="form-input" type="number" id="res-salary" placeholder="130000" min="0" step="1000"></div>
           <div class="form-row" id="res-rate-row"><label>Daily Rate ($)</label><input class="form-input" type="number" id="res-rate" placeholder="0" min="0" step="50"></div>
+          <div class="form-row" id="res-hourly-row"><label>or $/hr (burdened)</label><input class="form-input" type="number" id="res-hourly" placeholder="0" min="0" step="0.01"></div>
           <div class="form-row"><label>Location (State)</label>
             <select class="form-input" id="res-state">
               <option value="">Not set</option>
@@ -1030,7 +1032,7 @@ select.form-input{cursor:pointer}
             <strong style="color:#E65100">RCTI Contractor</strong> = zero burden (daily rate is total cost). RCTI stands for <em>Recipient Created Tax Invoice</em> &mdash; the hiring company issues the invoice on behalf of the contractor, common for independent contractors where the business (recipient) creates the tax invoice rather than the supplier.
           </div>
           <div style="font-size:0.6875rem;color:var(--text3);margin-top:0.375rem;font-style:italic">
-            Default rates are derived from the company Burden Calculator v0.8 (FY24) with super updated to FY26 (12%). ACT, VIC, and WA rates are verified from the spreadsheet; other states are interpolated from nearest match. VIC payroll tax includes Mental Health &amp; Wellbeing Surcharge (0.555%) and COVID-19 Temporary Surcharge (0.555%).
+            Default rates are from the Burden Calculator effective 16 Feb 2026 with super at 12% (FY26). All state rates are verified; NT is interpolated from NSW.
           </div>
         </div>
         <div class="form-row-inline" style="margin-bottom:0.75rem;align-items:flex-end">
@@ -1099,39 +1101,38 @@ const AU_STATE_LABELS = Object.values(AU_STATES);
 
 // ===================== BURDEN RATE SYSTEM =====================
 const RESOURCE_TYPES = {
-  permanent: {label:'Permanent', desc:'Full-time employee with full burden (super, leave, payroll tax, workers comp, IT & facilities)'},
-  casual:    {label:'Casual / PAYG', desc:'Casual employee — super + workers comp only, no leave entitlements'},
-  contractor:{label:'RCTI Contractor', desc:'Independent contractor via RCTI — no burden applied, daily rate only'}
+  permanent:    {label:'Permanent',       desc:'Full-time or part-time employee with full burden (super, leave, payroll tax, workers comp)'},
+  casual:       {label:'Casual / PAYG',   desc:'Casual employee — super + payroll tax + workers comp only, no leave entitlements'},
+  contractorPT: {label:'Contractor (PT)', desc:'Contractor with payroll tax — payroll tax only, no super or leave'},
+  contractor:   {label:'RCTI Contractor', desc:'Independent contractor via RCTI — no burden applied, daily rate only'}
 };
 
 const DEFAULT_BURDEN_CONFIG = {
   financialYear: 'FY26',
-  superRate: 12.0,         // SG rate FY26 (was 11.5% FY25, 12% from July 2025)
+  superRate: 12.0,         // SG rate FY26 (12% from 1 July 2025)
   components: {
-    // Rates aligned to example company Burden Calculator v0.8 — payroll tax includes on-cost compounding,
-    // workers comp is actual office/professional rates, leave & holidays from company actuals.
-    // VIC includes Mental Health (0.555%) and COVID surcharge (0.555%) in payrollTax total.
-    // States not in spreadsheet (NSW, QLD, SA, TAS, NT) use interpolated rates from nearest match.
-    'AU-ACT': {payrollTax:7.60, workersComp:0.26, annualLeave:8.75, sickLeave:2.97, publicHolidays:5.85, annualHours:2080},  // verified
-    'AU-NSW': {payrollTax:6.10, workersComp:0.25, annualLeave:8.75, sickLeave:2.95, publicHolidays:5.50, annualHours:2080},  // interpolated
-    'AU-VIC': {payrollTax:6.49, workersComp:0.30, annualLeave:8.73, sickLeave:2.93, publicHolidays:5.77, annualHours:2080},  // verified (incl MH+COVID surcharges)
-    'AU-QLD': {payrollTax:5.32, workersComp:0.22, annualLeave:8.75, sickLeave:2.95, publicHolidays:5.50, annualHours:2080},  // interpolated
-    'AU-SA':  {payrollTax:5.54, workersComp:0.25, annualLeave:8.75, sickLeave:2.95, publicHolidays:5.23, annualHours:2080},  // interpolated
-    'AU-WA':  {payrollTax:6.11, workersComp:0.19, annualLeave:9.27, sickLeave:2.93, publicHolidays:5.23, annualHours:1950},  // verified (37.5hrs/wk)
-    'AU-TAS': {payrollTax:4.48, workersComp:0.25, annualLeave:8.75, sickLeave:2.95, publicHolidays:5.50, annualHours:2080},  // interpolated
-    'AU-NT':  {payrollTax:6.16, workersComp:0.25, annualLeave:8.75, sickLeave:2.95, publicHolidays:5.85, annualHours:2080}   // interpolated
+    // Rates from Burden Calculator effective 16 Feb 2026. Payroll tax includes on-cost compounding
+    // (PT applies to base + super). Base PT rate = payrollTax / (1 + superRate/100).
+    // Leave breakdown derived proportionally from verified ACT figures where not explicitly provided.
+    'AU-SA':  {payrollTax:5.54, workersComp:0.50, annualLeave:9.94, sickLeave:2.98, publicHolidays:5.46, annualHours:2080},  // Perm 36.42%, Casual 18.04%
+    'AU-ACT': {payrollTax:9.80, workersComp:0.50, annualLeave:9.88, sickLeave:2.96, publicHolidays:5.43, annualHours:2080},  // Perm 40.57%, Casual 22.30% — verified
+    'AU-VIC': {payrollTax:7.94, workersComp:0.23, annualLeave:9.76, sickLeave:2.92, publicHolidays:5.36, annualHours:2080},  // Perm 38.21%, Casual 20.17%
+    'AU-QLD': {payrollTax:6.48, workersComp:0.40, annualLeave:9.38, sickLeave:2.81, publicHolidays:5.16, annualHours:2080},  // Perm 36.23%, Casual 18.88%
+    'AU-WA':  {payrollTax:6.16, workersComp:0.50, annualLeave:9.37, sickLeave:2.81, publicHolidays:5.14, annualHours:1950},  // Perm 35.98%, Casual 18.66% (37.5hrs/wk)
+    'AU-TAS': {payrollTax:6.83, workersComp:0.50, annualLeave:9.40, sickLeave:2.82, publicHolidays:5.17, annualHours:2080},  // Perm 36.72%, Casual 19.33%
+    'AU-NSW': {payrollTax:6.10, workersComp:0.50, annualLeave:9.07, sickLeave:2.72, publicHolidays:4.98, annualHours:2080},  // Perm 35.37%, Casual 18.60%
+    'AU-NT':  {payrollTax:6.16, workersComp:0.50, annualLeave:9.07, sickLeave:2.72, publicHolidays:4.98, annualHours:2080}   // interpolated from NSW
   },
-  // Casual workers: super + payroll tax + workers comp (no leave entitlements)
-  casualComponents: ['superRate','payrollTax','workersComp'],
   // Notes for display
   notes: [
     'Super: Superannuation Guarantee — compulsory employer contribution (12% from 1 July 2025)',
-    'Payroll Tax: Effective rate incl. on-cost compounding (payroll tax applies to super). VIC includes Mental Health + COVID surcharges.',
-    'Workers Comp: Actual office/professional services premium rates (not state-wide averages)',
-    'Annual Leave: 4 weeks + 17.5% leave loading where applicable (~8.7-9.3% of base)',
-    'Sick/Personal Leave: Based on actual accrual rates (~2.9-3.0% of base)',
-    'Public Holidays: Based on effective impact including replacement costs (~5.2-5.9% of base)',
-    'Annual Hours: 2,080hrs (40hrs/wk) standard; 1,950hrs (37.5hrs/wk) for WA. Per company Burden Calculator v0.8.'
+    'Payroll Tax: Effective rate incl. on-cost compounding (PT applies to base + super). Base PT rate = displayed rate ÷ 1.12.',
+    'Workers Comp: Actual office/professional services premium rates',
+    'Annual Leave: 4 weeks + 17.5% leave loading where applicable',
+    'Sick/Personal Leave: Based on actual accrual rates',
+    'Public Holidays: Based on effective impact including replacement costs',
+    'Contractor (PT): Payroll tax only at base rate (no super compounding) — base PT = payrollTax ÷ (1 + super%/100)',
+    'Annual Hours: 2,080hrs (40hrs/wk) standard; 1,950hrs (37.5hrs/wk) for WA. Effective 16 Feb 2026.'
   ]
 };
 
@@ -1284,6 +1285,11 @@ let fileHandle = null; // File System Access API handle for direct file saving
 // ===================== FILE SYSTEM ACCESS =====================
 const hasFileSystemAccess = ('showOpenFilePicker' in window);
 
+// ===================== SESSION & FILE INTEGRITY =====================
+const SESSION_ID = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+let fileConflictDetected = false;
+let fileIntegrityInterval = null;
+
 // IndexedDB helpers for persisting file handles across page refreshes
 const FILE_HANDLE_DB = 'rp_file_handles';
 const FILE_HANDLE_STORE = 'handles';
@@ -1352,8 +1358,19 @@ async function reconnectFile() {
     removeAutoReconnectListeners();
     updateFileStatus();
     toast('Reconnected to: ' + handle.name, 'success');
+    // Check if another session owns the file before overwriting
+    try {
+      const file = await handle.getFile();
+      const text = await file.text();
+      const data = JSON.parse(text);
+      if (data._meta && data._meta.sessionId && data._meta.sessionId !== SESSION_ID) {
+        showFileConflictBanner('The file was last saved by another session (' + new Date(data._meta.lastSaved).toLocaleTimeString('en-AU') + ').');
+        return;
+      }
+    } catch(e) { /* proceed with save if read fails */ }
     // Immediately save to ensure the file is up-to-date
     saveToFileHandle();
+    startFileIntegrityChecks();
   } else {
     toast('File access denied — try again or link a new file', 'error');
   }
@@ -1400,10 +1417,26 @@ function dismissReconnectBanner() {
 
 async function saveToFileHandle() {
   if (!fileHandle) return false;
+  if (fileConflictDetected) {
+    toast('Save blocked — another session is editing this file. Resolve the conflict first.', 'error');
+    return false;
+  }
   try {
+    const output = Object.assign({}, appData, { _meta: { sessionId: SESSION_ID, lastSaved: new Date().toISOString() } });
     const writable = await fileHandle.createWritable();
-    await writable.write(JSON.stringify(appData, null, 2));
+    await writable.write(JSON.stringify(output, null, 2));
     await writable.close();
+    // Verify write succeeded by reading back
+    try {
+      const file = await fileHandle.getFile();
+      const text = await file.text();
+      const check = JSON.parse(text);
+      if (!check._meta || check._meta.sessionId !== SESSION_ID) {
+        console.warn('File write verification failed — session ID mismatch');
+        showFileConflictBanner('Write verification failed — another process may have overwritten the file.');
+        return false;
+      }
+    } catch(ve) { console.warn('File verification read failed:', ve); }
     return true;
   } catch(e) {
     console.warn('File save failed:', e);
@@ -1412,6 +1445,91 @@ async function saveToFileHandle() {
     updateFileStatus();
     return false;
   }
+}
+
+function startFileIntegrityChecks() {
+  stopFileIntegrityChecks();
+  if (!fileHandle) return;
+  fileIntegrityInterval = setInterval(checkFileIntegrity, 5000);
+}
+
+function stopFileIntegrityChecks() {
+  if (fileIntegrityInterval) { clearInterval(fileIntegrityInterval); fileIntegrityInterval = null; }
+}
+
+async function checkFileIntegrity() {
+  if (!fileHandle || fileConflictDetected) return;
+  try {
+    const file = await fileHandle.getFile();
+    const text = await file.text();
+    const data = JSON.parse(text);
+    if (data._meta && data._meta.sessionId && data._meta.sessionId !== SESSION_ID) {
+      showFileConflictBanner('Another session (' + new Date(data._meta.lastSaved).toLocaleTimeString('en-AU') + ') is also editing "' + fileHandle.name + '".');
+    }
+  } catch(e) { /* file may be temporarily locked during write by another session */ }
+}
+
+function showFileConflictBanner(detail) {
+  fileConflictDetected = true;
+  stopFileIntegrityChecks();
+  dismissFileConflictBanner();
+  updateFileStatus();
+  const banner = document.createElement('div');
+  banner.id = 'file-conflict-banner';
+  banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:1000;background:var(--red);color:#fff;padding:0.625rem 1rem;display:flex;align-items:center;justify-content:center;gap:0.75rem;font-size:0.8125rem;font-weight:600;box-shadow:0 2px 12px rgba(0,0,0,0.3)';
+  banner.innerHTML = '<span>&#9888; FILE CONFLICT: ' + detail + ' Saves to this file are paused to prevent data loss.</span>' +
+    '<button onclick="resolveConflictKeepMine()" style="background:#fff;color:var(--red);border:none;border-radius:0.375rem;padding:0.25rem 0.75rem;font-weight:700;cursor:pointer;font-size:0.8125rem" title="Overwrite the file with this session\'s data">Keep Mine</button>' +
+    '<button onclick="resolveConflictReload()" style="background:rgba(255,255,255,0.2);color:#fff;border:1px solid rgba(255,255,255,0.4);border-radius:0.375rem;padding:0.25rem 0.75rem;font-weight:700;cursor:pointer;font-size:0.8125rem" title="Reload data from the file (discard this session\'s unsaved changes)">Load File</button>' +
+    '<button onclick="resolveConflictUnlink()" style="background:transparent;border:none;color:rgba(255,255,255,0.7);cursor:pointer;font-size:0.75rem;text-decoration:underline;padding:0.25rem" title="Disconnect from the file and continue editing in browser only">Unlink File</button>';
+  document.body.prepend(banner);
+}
+
+function dismissFileConflictBanner() {
+  const b = document.getElementById('file-conflict-banner');
+  if (b) b.remove();
+}
+
+async function resolveConflictKeepMine() {
+  fileConflictDetected = false;
+  dismissFileConflictBanner();
+  updateFileStatus();
+  const saved = await saveToFileHandle();
+  if (saved) {
+    toast('File overwritten with your data', 'success');
+    startFileIntegrityChecks();
+  } else {
+    toast('Could not save to file', 'error');
+  }
+}
+
+async function resolveConflictReload() {
+  if (!fileHandle) return;
+  try {
+    const file = await fileHandle.getFile();
+    const text = await file.text();
+    const imported = JSON.parse(text);
+    delete imported._meta;
+    appData = imported;
+    migrateData();
+    saveData(); // saves to localStorage + file (will write our session ID)
+    renderAll();
+    fileConflictDetected = false;
+    dismissFileConflictBanner();
+    startFileIntegrityChecks();
+    toast('Loaded data from ' + file.name, 'success');
+  } catch(e) {
+    toast('Could not read file: ' + e.message, 'error');
+  }
+}
+
+function resolveConflictUnlink() {
+  fileConflictDetected = false;
+  dismissFileConflictBanner();
+  fileHandle = null;
+  removeStoredFileHandle(currentPortfolioKey);
+  stopFileIntegrityChecks();
+  updateFileStatus();
+  toast('File unlinked — saving to browser only', 'success');
 }
 
 async function createAndLinkFile() {
@@ -1429,7 +1547,7 @@ async function createAndLinkFile() {
     await storeFileHandle(currentPortfolioKey, handle);
     updateFileStatus();
     const saved = await saveToFileHandle();
-    if (saved) toast('File created and linked: ' + fileHandle.name, 'success');
+    if (saved) { toast('File created and linked: ' + fileHandle.name, 'success'); startFileIntegrityChecks(); }
   } catch(e) {
     if (e.name !== 'AbortError') toast('Could not create file: ' + e.message, 'error');
   }
@@ -1438,7 +1556,9 @@ async function createAndLinkFile() {
 function updateFileStatus() {
   const el = document.getElementById('portfolio-filename');
   if (!el) return;
-  if (fileHandle) {
+  if (fileConflictDetected && fileHandle) {
+    el.innerHTML = '<span style="color:var(--red);font-weight:600" title="Another session is editing this file — saves are paused">&#9888; CONFLICT: ' + fileHandle.name + '</span>';
+  } else if (fileHandle) {
     el.innerHTML = '<span style="color:var(--green)" title="Saving to file on every save">&#128279; ' + fileHandle.name + '</span>';
   } else if (pendingFileHandle) {
     el.innerHTML = '<span style="color:var(--amber);cursor:pointer;font-weight:600" onclick="reconnectFile()" title="Click to re-grant file access">&#128279; Reconnect: ' + pendingFileHandle.name + '</span>';
@@ -1490,6 +1610,9 @@ function renderPortfolioBar() {
 
 async function switchPortfolio(name) {
   saveData(); // save current first
+  stopFileIntegrityChecks();
+  fileConflictDetected = false;
+  dismissFileConflictBanner();
   currentPortfolioKey = name;
   fileHandle = null; // Clear until restored
   localStorage.setItem(RP_LAST_KEY, name);
@@ -1502,7 +1625,7 @@ async function switchPortfolio(name) {
   const stored = await getStoredHandle(name);
   if (stored) {
     const granted = await requestHandlePermission(stored);
-    if (granted) { fileHandle = stored; }
+    if (granted) { fileHandle = stored; startFileIntegrityChecks(); }
     else { pendingFileHandle = stored; }
   }
   renderAll();
@@ -1636,6 +1759,9 @@ function deletePortfolio() {
   setPortfolioList(newList);
   localStorage.removeItem(storageKeyFor(name));
   removeStoredFileHandle(name);
+  stopFileIntegrityChecks();
+  fileConflictDetected = false;
+  dismissFileConflictBanner();
   fileHandle = null;
   currentPortfolioKey = newList[0];
   localStorage.setItem(RP_LAST_KEY, currentPortfolioKey);
@@ -1651,7 +1777,8 @@ function loadData() {
     const saved = localStorage.getItem(storageKeyFor(currentPortfolioKey));
     if (saved) {
       appData = JSON.parse(saved);
-      const before = saved;
+      delete appData._meta; // Strip session metadata if present
+      const before = JSON.stringify(appData);
       migrateData();
       // If migration changed anything, persist immediately (writes to localStorage + linked JSON file)
       const after = JSON.stringify(appData);
@@ -1674,6 +1801,7 @@ async function tryLoadFromFile(portfolioName) {
     if (!resp.ok) return false;
     const data = await resp.json();
     if (!data || !data.settings) return false;
+    delete data._meta;
     appData = data;
     // Use the portfolio name from file if available
     if (appData.settings.portfolioName) {
@@ -2433,7 +2561,7 @@ function renderResources() {
         <div>
           <span class="res-name">${r.name}</span>
           <span class="res-role" style="margin-left:0.5rem">${r.role}</span>
-          <span style="margin-left:0.375rem;padding:0.125rem 0.375rem;border-radius:0.5rem;font-size:0.625rem;font-weight:600;background:${resType==='contractor'?'#FFF3E0':resType==='casual'?'#E8F5E9':'var(--accent-bg)'};color:${resType==='contractor'?'#E65100':resType==='casual'?'#2E7D32':'var(--accent)'}">${typeLabel}</span>
+          <span style="margin-left:0.375rem;padding:0.125rem 0.375rem;border-radius:0.5rem;font-size:0.625rem;font-weight:600;background:${resType==='contractor'||resType==='contractorPT'?'#FFF3E0':resType==='casual'?'#E8F5E9':'var(--accent-bg)'};color:${resType==='contractor'||resType==='contractorPT'?'#E65100':resType==='casual'?'#2E7D32':'var(--accent)'}">${typeLabel}</span>
           ${r.state?`<span style="margin-left:0.375rem;padding:0.125rem 0.375rem;border-radius:0.5rem;font-size:0.625rem;font-weight:600;background:var(--accent-bg);color:var(--accent)">${AU_STATES[r.state]||r.state}</span>`:''}
         </div>
         <div style="display:flex;gap:0.375rem;align-items:center">
@@ -2452,11 +2580,12 @@ function renderResources() {
         </div>
       </div>
       <div style="display:flex;gap:1rem;font-size:0.8125rem;color:var(--text2);margin-bottom:0.375rem;flex-wrap:wrap;align-items:center">
-        ${resType!=='contractor'?`<span>Base salary: $<input class="salary-input" type="number" value="${r.salary||0}" min="0" step="1000" onchange="updateResourceField(${origIdx},'salary',+this.value);renderResources()"></span>`:''}
-        ${resType==='contractor'?`<span>Day rate: $<input class="salary-input" type="number" value="${r.dailyRate||0}" min="0" step="50" onchange="updateResourceField(${origIdx},'dailyRate',+this.value);renderResources()"></span>`:''}
-        <span>Hourly rate: <strong style="color:var(--accent)">$${burden.hourlyRate.toFixed(2)}/hr</strong></span>
+        ${resType!=='contractor'&&resType!=='contractorPT'?`<span>Base salary: $<input class="salary-input" type="number" value="${r.salary||0}" min="0" step="1000" onchange="updateResourceField(${origIdx},'salary',+this.value);renderResources()"></span>`:''}
+        ${resType==='contractor'||resType==='contractorPT'?`<span>Day rate: $<input class="salary-input" type="number" value="${r.dailyRate||0}" min="0" step="50" onchange="updateResourceField(${origIdx},'dailyRate',+this.value);renderResources()"></span>`:''}
+        <span style="color:var(--text3)">or</span>
+        <span>$/hr: <input class="salary-input" type="number" value="${burden.hourlyRate>0?+burden.hourlyRate.toFixed(2):0}" min="0" step="0.01" style="width:5rem" onchange="setFromHourlyRate(${origIdx},+this.value)"></span>
         <span>Burden cost: <strong style="color:var(--text)">${fmtDollar(burden.annualBurdenCost)}/yr</strong></span>
-        ${burden.totalBurdenPct>0?`<span style="position:relative;cursor:pointer" onclick="this.querySelector('.burden-tip').classList.toggle('show')">Uplift: <strong>${burden.totalBurdenPct.toFixed(1)}%</strong> <span style="color:var(--accent)">&#9432;</span><span class="burden-tip">${Object.entries(burden.breakdown).map(([k,v])=>'<div style=\\"display:flex;justify-content:space-between;gap:1rem\\"><span>'+k+'</span><strong>'+v.toFixed(2)+'%</strong></div>').join('')}<div style="border-top:1px solid var(--border);margin-top:0.25rem;padding-top:0.25rem;display:flex;justify-content:space-between"><span style=\\"font-weight:700\\">Total</span><strong style=\\"color:var(--accent)\\">${burden.totalBurdenPct.toFixed(2)}%</strong></div></span></span>`:''}
+        ${burden.totalBurdenPct>0?`<span style="position:relative;cursor:pointer" onclick="this.querySelector('.burden-tip').classList.toggle('show')">Uplift: <strong>${burden.totalBurdenPct.toFixed(2)}%</strong> <span style="color:var(--accent)">&#9432;</span><span class="burden-tip">${Object.entries(burden.breakdown).map(([k,v])=>'<div style=\\"display:flex;justify-content:space-between;gap:1rem\\"><span>'+k+'</span><strong>'+v.toFixed(2)+'%</strong></div>').join('')}<div style="border-top:1px solid var(--border);margin-top:0.25rem;padding-top:0.25rem;display:flex;justify-content:space-between"><span style=\\"font-weight:700\\">Total</span><strong style=\\"color:var(--accent)\\">${burden.totalBurdenPct.toFixed(2)}%</strong></div></span></span>`:''}
         ${r.notes?`<span>${r.notes}</span>`:''}
       </div>
       ${assignList.length>0?`<div style="margin-bottom:0.375rem">${assignList.map(([proj,fte])=>`<span class="assignment-row"><span class="assignment-proj">${shortName(proj,30)}</span> ${fte} FTE</span>`).join('')}</div>`:''}
@@ -2481,10 +2610,13 @@ function renderResources() {
 
 function toggleResTypeFields(){
   const type=document.getElementById('res-type')?.value||'permanent';
+  const isContractor = type==='contractor' || type==='contractorPT';
   const salRow=document.getElementById('res-salary-row');
   const rateRow=document.getElementById('res-rate-row');
-  if(salRow)salRow.style.display=type==='contractor'?'none':'';
-  if(rateRow)rateRow.style.display=type==='contractor'?'':'none';
+  const hourlyRow=document.getElementById('res-hourly-row');
+  if(salRow)salRow.style.display=isContractor?'none':'';
+  if(rateRow)rateRow.style.display=isContractor?'':'none';
+  if(hourlyRow)hourlyRow.style.display=''; // always visible
 }
 
 function addResource(){
@@ -2493,17 +2625,69 @@ function addResource(){
   const role=document.getElementById('res-role').value;
   const status=document.getElementById('res-status').value;
   const resourceType=document.getElementById('res-type')?.value||'permanent';
-  const salary=+(document.getElementById('res-salary').value)||0;
-  const dailyRate=+(document.getElementById('res-rate').value)||0;
+  let salary=+(document.getElementById('res-salary').value)||0;
+  let dailyRate=+(document.getElementById('res-rate').value)||0;
+  const hourlyInput=+(document.getElementById('res-hourly').value)||0;
   const state=document.getElementById('res-state').value;
   const notes=document.getElementById('res-notes').value.trim();
+  const isContractor = resourceType==='contractor' || resourceType==='contractorPT';
+
+  // If hourly rate provided but no salary/daily rate, reverse-calculate
+  if (hourlyInput > 0 && ((isContractor && dailyRate === 0) || (!isContractor && salary === 0))) {
+    const bc = getBurdenConfig();
+    const comp = bc.components[state||'AU-ACT'] || bc.components['AU-ACT'];
+    const superRate = bc.superRate || 12;
+    const annualHours = comp.annualHours || 2080;
+    if (resourceType === 'contractor') {
+      dailyRate = Math.round(hourlyInput * 8);
+    } else if (resourceType === 'contractorPT') {
+      const basePT = (comp.payrollTax || 0) / (1 + superRate / 100);
+      dailyRate = Math.round(hourlyInput * 8 / (1 + basePT / 100));
+    } else {
+      let totalPct = superRate + (comp.payrollTax||0) + (comp.workersComp||0);
+      if (resourceType === 'permanent') totalPct += (comp.annualLeave||0) + (comp.sickLeave||0) + (comp.publicHolidays||0);
+      salary = Math.round(hourlyInput * annualHours / (1 + totalPct / 100));
+    }
+  }
+
   if(!appData.resources)appData.resources=[];
   appData.resources.push({id:'r'+Date.now(),name,role,status,resourceType,salary,dailyRate,state,assignments:{},comments:[],notes});
-  document.getElementById('res-name').value='';document.getElementById('res-salary').value='';document.getElementById('res-rate').value='';document.getElementById('res-notes').value='';
+  document.getElementById('res-name').value='';document.getElementById('res-salary').value='';document.getElementById('res-rate').value='';document.getElementById('res-hourly').value='';document.getElementById('res-notes').value='';
   schedSave();toast('Resource added: '+name,'info');
 }
 function deleteResource(idx){if(!confirm('Delete this resource?'))return;appData.resources.splice(idx,1);schedSave();toast('Resource removed','info');}
 function updateResourceField(idx,field,value){appData.resources[idx][field]=value;schedSave();}
+
+function setFromHourlyRate(idx, hourlyRate) {
+  const r = appData.resources[idx];
+  const type = r.resourceType || 'permanent';
+  const bc = getBurdenConfig();
+  const state = r.state || 'AU-ACT';
+  const comp = bc.components[state] || bc.components['AU-ACT'];
+  const superRate = bc.superRate || 12;
+  const annualHours = comp.annualHours || 2080;
+
+  if (type === 'contractor') {
+    // RCTI: hourly = daily / 8, so daily = hourly * 8
+    r.dailyRate = Math.round(hourlyRate * 8);
+  } else if (type === 'contractorPT') {
+    // Contractor PT: hourly = (daily / 8) * (1 + basePT%), so daily = hourly * 8 / (1 + basePT%)
+    const basePT = (comp.payrollTax || 0) / (1 + superRate / 100);
+    r.dailyRate = Math.round(hourlyRate * 8 / (1 + basePT / 100));
+  } else {
+    // Permanent/casual: hourly = salary * (1 + burden%) / annualHours
+    // So: salary = hourly * annualHours / (1 + burden%)
+    let totalPct = 0;
+    if (type === 'permanent') {
+      totalPct = superRate + (comp.payrollTax||0) + (comp.workersComp||0) + (comp.annualLeave||0) + (comp.sickLeave||0) + (comp.publicHolidays||0);
+    } else if (type === 'casual') {
+      totalPct = superRate + (comp.payrollTax||0) + (comp.workersComp||0);
+    }
+    r.salary = Math.round(hourlyRate * annualHours / (1 + totalPct / 100));
+  }
+  schedSave();
+  renderResources();
+}
 function assignResource(idx){
   const proj=document.getElementById('assign-proj-'+idx).value;
   const projData=appData.projects[proj];
@@ -2545,11 +2729,21 @@ function calcBurdenRate(resource) {
   const annualHours = comp.annualHours || 2080;
 
   if (type === 'contractor') {
-    // Contractors: no burden, use daily rate directly
+    // RCTI Contractors: no burden, use daily rate directly
     const dailyRate = resource.dailyRate || 0;
     const hourlyRate = dailyRate / 8;
     const annualCost = dailyRate * WORKING_DAYS_PER_YEAR;
     return {hourlyRate, annualBurdenCost:annualCost, totalBurdenPct:0, breakdown:{}, annualHours, type, baseSalary:0, dailyRate};
+  }
+
+  if (type === 'contractorPT') {
+    // Contractor with payroll tax: daily rate + base payroll tax (no super compounding)
+    const dailyRate = resource.dailyRate || 0;
+    const basePTRate = (comp.payrollTax || 0) / (1 + superRate / 100);
+    const roundedPT = Math.round(basePTRate * 100) / 100;
+    const hourlyRate = (dailyRate / 8) * (1 + roundedPT / 100);
+    const annualCost = dailyRate * WORKING_DAYS_PER_YEAR * (1 + roundedPT / 100);
+    return {hourlyRate, annualBurdenCost:annualCost, totalBurdenPct:roundedPT, breakdown:{'Payroll Tax':roundedPT}, annualHours, type, baseSalary:0, dailyRate};
   }
 
   const salary = resource.salary || 0;
@@ -2592,7 +2786,7 @@ function calcMaxSalary(projName, role, fte, targetMarginPct, resourceType, state
   } else if (resourceType === 'casual') {
     totalPct = superRate + (comp.payrollTax||0) + (comp.workersComp||0);
   } else {
-    return 0; // contractors don't have salary
+    return 0; // contractors (RCTI and PT) use daily rates, not salary
   }
   const p = appData.projects[projName];
   if (!p) return 0;
@@ -2852,8 +3046,9 @@ function runScenario(){
   const calc=calcProjectFinancials(proj);
 
   function scenario(salary,count,label){
-    const fakeRes={salary,dailyRate:resType==='contractor'?(salary/WORKING_DAYS_PER_YEAR):0,resourceType:resType,state};
-    if(resType==='contractor'){fakeRes.salary=0;fakeRes.dailyRate=salary/WORKING_DAYS_PER_YEAR;}
+    const isContractor = resType==='contractor' || resType==='contractorPT';
+    const fakeRes={salary,dailyRate:isContractor?(salary/WORKING_DAYS_PER_YEAR):0,resourceType:resType,state};
+    if(isContractor){fakeRes.salary=0;fakeRes.dailyRate=salary/WORKING_DAYS_PER_YEAR;}
     const burden=calcBurdenRate(fakeRes);
     const hrsPerWeek=burden.annualHours/52;
     const weeklyBurden=burden.hourlyRate*hrsPerWeek*count;
@@ -2921,7 +3116,7 @@ function renderSalaryBanding() {
   });
 
   html += '</tbody></table>';
-  html += `<div style="font-size:0.6875rem;color:var(--text3);margin-top:0.375rem">All salary figures are base salary (excl. super). Hourly rate = base salary &times; (1 + burden%) &divide; annual hours. Max base salary = remaining budget for ${tgtMargin}% margin on selected project at given FTE. Target margin is set per-project in the Project Editor. Contractors not shown (no salary-based burden).</div>`;
+  html += `<div style="font-size:0.6875rem;color:var(--text3);margin-top:0.375rem">All salary figures are base salary (excl. super). Hourly rate = base salary &times; (1 + burden%) &divide; annual hours. Max base salary = remaining budget for ${tgtMargin}% margin on selected project at given FTE. Target margin is set per-project in the Project Editor. Contractors use daily rates — Contractor (PT) adds base payroll tax; RCTI contractors have zero burden.</div>`;
   tableEl.innerHTML = html;
 }
 
@@ -3019,11 +3214,19 @@ function renderBurdenEditor() {
     });
     html += '</tr>';
     // Total burden row (casual)
-    html += '<tr style="font-weight:600"><td>Total Burden % (Casual)</td>';
+    html += '<tr style="font-weight:600"><td>Total Burden % (Casual / PAYG)</td>';
     AU_STATE_CODES.forEach(st => {
       const comp = bc.components[st] || {};
       const total = bc.superRate + (comp.payrollTax||0) + (comp.workersComp||0);
       html += `<td style="text-align:center;color:var(--text2)">${total.toFixed(1)}%</td>`;
+    });
+    html += '</tr>';
+    // Total burden row (contractor with PT)
+    html += '<tr style="font-weight:600"><td>Total Burden % (Contractor PT)</td>';
+    AU_STATE_CODES.forEach(st => {
+      const comp = bc.components[st] || {};
+      const basePT = (comp.payrollTax||0) / (1 + bc.superRate / 100);
+      html += `<td style="text-align:center;color:var(--text3)">${basePT.toFixed(1)}%</td>`;
     });
     html += '</tr></tbody></table>';
     tableEl.innerHTML = html;
@@ -3518,24 +3721,22 @@ function removeStanddown(projName,idx){
 function refreshRawJSON(){document.getElementById('raw-json').value=JSON.stringify(appData,null,2);}
 function applyRawJSON(){try{appData=JSON.parse(document.getElementById('raw-json').value);migrateData();saveData();renderAll();toast('JSON applied','success');}catch(e){toast('Invalid JSON: '+e.message,'error');}}
 async function exportJSON(){
-  // If we have a linked file handle, save directly to it
-  if (fileHandle) {
-    const saved = await saveToFileHandle();
-    if (saved) { toast('Saved to: ' + fileHandle.name, 'success'); return; }
-  }
-  // If File System Access is available, offer Save As picker
+  // Always show Save As picker so the user can choose/create a filename
   if (hasFileSystemAccess) {
     try {
-      const safeName = currentPortfolioKey.replace(/[^a-zA-Z0-9 _-]/g, '').replace(/\s+/g, '_');
+      // Suggest the linked filename if available, otherwise derive from portfolio name
+      const suggestedName = fileHandle ? fileHandle.name : (currentPortfolioKey.replace(/[^a-zA-Z0-9 _-]/g, '').replace(/\s+/g, '_') + '.json');
       const handle = await window.showSaveFilePicker({
-        suggestedName: safeName + '.json',
+        suggestedName,
         types: [{ description: 'JSON Files', accept: { 'application/json': ['.json'] } }]
       });
       fileHandle = handle;
+      fileConflictDetected = false;
+      dismissFileConflictBanner();
       await storeFileHandle(currentPortfolioKey, handle);
       updateFileStatus();
       const saved = await saveToFileHandle();
-      if (saved) toast('Exported and linked: ' + handle.name, 'success');
+      if (saved) { toast('Exported and linked: ' + handle.name, 'success'); startFileIntegrityChecks(); }
       return;
     } catch(e) {
       if (e.name === 'AbortError') return;
@@ -3563,9 +3764,13 @@ async function importViaAPI(){
       if (!list.includes(importName)) { list.push(importName); setPortfolioList(list); }
       currentPortfolioKey = importName;
       localStorage.setItem(RP_LAST_KEY, importName);
+      delete imported._meta; // Strip session metadata from imported data
       fileHandle = handle;
+      fileConflictDetected = false;
+      dismissFileConflictBanner();
       await storeFileHandle(importName, handle);
       appData = imported; migrateData(); saveData(); renderAll(); renderPortfolioBar(); updateFileStatus();
+      startFileIntegrityChecks();
       toast('Imported and linked: ' + file.name, 'success');
     } catch(e) {
       if (e.name !== 'AbortError') toast('Import failed: ' + e.message, 'error');
@@ -3582,10 +3787,11 @@ function importJSON(e){
   r.onload=ev=>{
     try{
       const imported=JSON.parse(ev.target.result);
+      delete imported._meta;
       const importName=imported.settings?.portfolioName||f.name.replace(/\.json$/i,'');
       const list=getPortfolioList();
       if(!list.includes(importName)){list.push(importName);setPortfolioList(list);}
-      localStorage.setItem(storageKeyFor(importName),ev.target.result);
+      localStorage.setItem(storageKeyFor(importName),JSON.stringify(imported));
       currentPortfolioKey=importName;
       localStorage.setItem(RP_LAST_KEY,importName);
       fileHandle = null;
@@ -3862,6 +4068,7 @@ initPortfolios();
         if (resp.ok) {
           const data = await resp.json();
           if (data && data.settings) {
+            delete data._meta;
             appData = data;
             migrateData();
             if (appData.settings.portfolioName) {
