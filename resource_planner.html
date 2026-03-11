@@ -1083,7 +1083,7 @@ select.form-input{cursor:pointer}
 
 <script>
 // ===================== VERSION & GITHUB =====================
-const APP_VERSION = '1.0.6';
+const APP_VERSION = '1.0.7';
 const GITHUB_REPO = 'ChrisFryer/IT-Project-Resource-Planner';
 const GITHUB_URL = 'https://github.com/' + GITHUB_REPO;
 const GITHUB_ISSUES_URL = GITHUB_URL + '/issues';
@@ -2569,6 +2569,9 @@ function renderResources() {
           <select class="form-input" style="max-width:8rem;padding:0.1875rem 0.375rem;font-size:0.75rem" onchange="updateResourceField(${origIdx},'status',this.value)">
             ${['available','merit-pool','interviewing','offered','assigned'].map(s=>`<option value="${s}" ${r.status===s?'selected':''}>${statusLabel[s]}</option>`).join('')}
           </select>
+          <select class="form-input" style="max-width:10rem;padding:0.1875rem 0.375rem;font-size:0.75rem" onchange="updateResourceField(${origIdx},'role',this.value);renderResources()">
+            ${appData.roles.map(rl=>`<option value="${rl}" ${r.role===rl?'selected':''}>${rl}</option>`).join('')}
+          </select>
           <select class="form-input" style="max-width:7rem;padding:0.1875rem 0.375rem;font-size:0.75rem" onchange="updateResourceField(${origIdx},'resourceType',this.value);renderResources()">
             ${Object.entries(RESOURCE_TYPES).map(([k,v])=>`<option value="${k}" ${resType===k?'selected':''}>${v.label}</option>`).join('')}
           </select>
@@ -2821,8 +2824,13 @@ function calcProjectFinancials(projName){
   const resolved=resolvePhases(p);
   const totalWeeks=getProjectPhases(p).reduce((s,ph)=>(p.phases[ph]?s+p.phases[ph].weeks:s),0);
 
-  // Calculate costs from assigned resources
+  // Calculate costs from assigned resources, deducting public holidays per week
+  const projStates = p.holidayStates || ['AU-ACT'];
+  const overheadRoles = p.overheadRoles || [];
   let totalLabourCost=0;
+  let totalOverheadCost=0;
+  let totalDirectCost=0;
+  let totalHolidayDays=0;
   let costByRole={};
   appData.roles.forEach(role=>{
     const pPhases=getProjectPhases(p);
@@ -2836,26 +2844,57 @@ function calcProjectFinancials(projName){
 
     // Find assigned resources for this role and their cost
     const assignedRes=(appData.resources||[]).filter(r=>r.role===role&&r.assignments&&r.assignments[projName]>0);
-    let roleCostPerWeek=0;
+    const totalAssignedFTE = assignedRes.reduce((s,r)=>s+(r.assignments[projName]||0),0);
+    const peakDemandFTE = Math.max(...fteArr);
+
+    // Calculate blended hourly rate and hours-per-day for assigned resources
+    let blendedHourlyRate = 0;
+    let blendedHrsPerDay = 8;
     if(assignedRes.length>0){
+      let weightedRate = 0;
+      let weightedHpd = 0;
       assignedRes.forEach(r=>{
         const burden=calcBurdenRate(r);
-        const hrsPerWeek=burden.annualHours/52;
-        const weekCost=burden.hourlyRate*hrsPerWeek;
-        roleCostPerWeek+=weekCost*(r.assignments[projName]||0);
+        const fte = r.assignments[projName]||0;
+        weightedRate += burden.hourlyRate * fte;
+        weightedHpd += (burden.annualHours / 260) * fte;
       });
+      if (totalAssignedFTE > 0) {
+        blendedHourlyRate = weightedRate / totalAssignedFTE;
+        blendedHrsPerDay = weightedHpd / totalAssignedFTE;
+      }
     } else {
-      // Estimate using average: $140k salary permanent in ACT
       const estResource={salary:140000,dailyRate:0,resourceType:'permanent',state:'AU-ACT'};
       const estBurden=calcBurdenRate(estResource);
-      const hrsPerWeek=estBurden.annualHours/52;
-      const peakFTE=Math.max(...fteArr);
-      roleCostPerWeek=estBurden.hourlyRate*hrsPerWeek*peakFTE;
+      blendedHourlyRate = estBurden.hourlyRate;
+      blendedHrsPerDay = estBurden.annualHours / 260;
     }
 
-    const roleTotalCost=roleCostPerWeek*totalWeeks*(totalFTEWeeks/(totalWeeks*Math.max(...fteArr,0.01)));
+    // Iterate week-by-week through project phases
+    // Use max(demand, assigned) — if over-allocated, project bears the actual cost
+    let roleTotalCost = 0;
+    let overAllocWeeks = 0;
+    pPhases.forEach((phase, pi) => {
+      const phConf = resolved[phase];
+      if (!phConf) return;
+      const phaseFTE = fteArr[pi] || 0;
+      if (phaseFTE <= 0 && totalAssignedFTE <= 0) return;
+      const effectiveFTE = phaseFTE > 0 ? Math.max(phaseFTE, totalAssignedFTE) : 0;
+      if (totalAssignedFTE > phaseFTE && phaseFTE > 0) overAllocWeeks += phConf.weeks;
+      for (let w = phConf.start; w < phConf.end; w++) {
+        const holidaysThisWeek = getHolidaysInWeek(w, projStates).length;
+        const workingDays = Math.max(0, 5 - holidaysThisWeek);
+        if (holidaysThisWeek > 0) totalHolidayDays += holidaysThisWeek * effectiveFTE;
+        const weekHrs = blendedHrsPerDay * workingDays;
+        roleTotalCost += blendedHourlyRate * weekHrs * effectiveFTE;
+      }
+    });
+
+    const isOverhead = overheadRoles.includes(role);
     totalLabourCost+=roleTotalCost;
-    costByRole[role]={fteWeeks:totalFTEWeeks,cost:roleTotalCost,hasAssigned:assignedRes.length>0};
+    if (isOverhead) totalOverheadCost+=roleTotalCost;
+    else totalDirectCost+=roleTotalCost;
+    costByRole[role]={fteWeeks:totalFTEWeeks, cost:roleTotalCost, hasAssigned:assignedRes.length>0, assignedFTE:totalAssignedFTE, peakDemandFTE, overAllocWeeks, assignedCount:assignedRes.length, isOverhead};
   });
 
   const contingencyAmt=totalLabourCost*(fin.contingency/100);
@@ -2869,7 +2908,7 @@ function calcProjectFinancials(projName){
   const maxCostBudget=revenue*(1-targetMarginPct/100)-contingencyAmt;
   const remainingBudget=maxCostBudget-totalLabourCost;
 
-  return {totalLabourCost,contingencyAmt,totalCost,revenue,grossMargin,marginPct,costByRole,totalWeeks,engagementType:fin.engagementType,remainingBudget,targetMarginPct};
+  return {totalLabourCost,totalDirectCost,totalOverheadCost,contingencyAmt,totalCost,revenue,grossMargin,marginPct,costByRole,totalWeeks,totalHolidayDays,engagementType:fin.engagementType,remainingBudget,targetMarginPct};
 }
 
 let activeFinProject=null;
@@ -3018,6 +3057,8 @@ function renderFinProjectDetail(){
       <h4>P&L Summary</h4>
       <div class="fin-row"><span class="fin-label">${fin.engagementType==='tm'?'Purchase Order':'Revenue'}</span><span class="fin-value">${fmtDollar(calc.revenue)}</span></div>
       <div class="fin-row"><span class="fin-label">Labour Cost</span><span class="fin-value">${fmtDollar(calc.totalLabourCost)}</span></div>
+      ${calc.totalOverheadCost>0?`<div style="font-size:0.6875rem;color:var(--text3);margin:-0.25rem 0 0.125rem;padding-left:0.5rem">Direct: ${fmtDollar(calc.totalDirectCost)} | Overhead: ${fmtDollar(calc.totalOverheadCost)}</div>`:''}
+      ${calc.totalHolidayDays>0?`<div style="font-size:0.6875rem;color:var(--text3);margin:-0.125rem 0 0.25rem;padding-left:0.5rem">${calc.totalHolidayDays.toFixed(1)} public holiday day${calc.totalHolidayDays!==1?'s':''} deducted from project effort</div>`:''}
       <div class="fin-row"><span class="fin-label">Contingency (${fin.contingency}%)</span><span class="fin-value">${fmtDollar(calc.contingencyAmt)}</span></div>
       <div class="fin-row" style="border-top:2px solid var(--border)"><span class="fin-label" style="font-weight:700">Total Cost</span><span class="fin-value" style="font-weight:700">${fmtDollar(calc.totalCost)}</span></div>
       <div class="fin-row"><span class="fin-label" style="font-weight:700">${fin.engagementType==='tm'?'PO Remaining':'Gross Margin'}</span><span class="fin-value ${mPct>=tgt?'positive':mPct>=(tgt*0.6)?'warning':'negative'}" style="font-weight:700">${fmtDollar(calc.grossMargin)} (${mPct.toFixed(1)}%)</span></div>
@@ -3026,11 +3067,23 @@ function renderFinProjectDetail(){
     </div>
     <div class="fin-card" style="grid-column:1/-1">
       <h4>Cost Breakdown by Role</h4>
-      <table class="scenario-table"><thead><tr><th>Role</th><th>FTE-Weeks</th><th>Est. Cost</th><th>Source</th><th>% of Labour</th></tr></thead><tbody>`;
+      <table class="scenario-table"><thead><tr><th>Role</th><th>Demand</th><th>Assigned</th><th>FTE-Weeks</th><th>Est. Cost</th><th>Status</th><th>% of Labour</th></tr></thead><tbody>`;
 
   Object.entries(calc.costByRole).sort((a,b)=>b[1].cost-a[1].cost).forEach(([role,d])=>{
     const pct=calc.totalLabourCost>0?(d.cost/calc.totalLabourCost*100):0;
-    html+=`<tr><td style="font-weight:500">${role}</td><td style="text-align:center">${d.fteWeeks.toFixed(1)}</td><td style="font-family:'JetBrains Mono',monospace;font-weight:600">${fmtDollar(d.cost)}</td><td>${d.hasAssigned?'<span class="pool-badge assigned">Named</span>':'<span class="pool-badge available">Estimate</span>'}</td><td><div class="margin-bar" style="width:6rem;display:inline-block;vertical-align:middle"><div class="margin-bar-fill" style="width:${pct}%;background:var(--accent)"></div></div> ${pct.toFixed(1)}%</td></tr>`;
+    const isOver = d.assignedFTE > d.peakDemandFTE && d.peakDemandFTE > 0;
+    const isUnder = d.hasAssigned && d.assignedFTE < d.peakDemandFTE;
+    const isFilled = d.hasAssigned && d.assignedFTE >= d.peakDemandFTE && !isOver;
+    const statusBadge = isOver
+      ? '<span class="status-pill status-danger" title="Assigned FTE exceeds demand — over-allocation cost included">Over-allocated</span>'
+      : isFilled
+      ? '<span class="status-pill status-ok">Filled</span>'
+      : d.hasAssigned
+      ? '<span class="status-pill status-warn">Partial</span>'
+      : '<span class="pool-badge available">Estimate</span>';
+    const ohTag = d.isOverhead ? ' <span style="font-size:0.5625rem;padding:0.0625rem 0.25rem;border-radius:0.25rem;background:var(--amber-bg,rgba(245,158,11,0.15));color:var(--amber);font-weight:600;vertical-align:middle">OH</span>' : '';
+    html+=`<tr${isOver?' style="background:rgba(220,38,38,0.06)"':d.isOverhead?' style="background:rgba(245,158,11,0.04)"':''}><td style="font-weight:500">${role}${ohTag}</td><td style="text-align:center">${d.peakDemandFTE.toFixed(1)}</td><td style="text-align:center;font-weight:600;color:${isOver?'var(--red)':isFilled?'var(--green)':'var(--text)'}">${d.hasAssigned?d.assignedFTE.toFixed(1)+' ('+d.assignedCount+')':'\u2014'}</td><td style="text-align:center">${d.fteWeeks.toFixed(1)}</td><td style="font-family:'JetBrains Mono',monospace;font-weight:600">${fmtDollar(d.cost)}</td><td>${statusBadge}</td><td><div class="margin-bar" style="width:6rem;display:inline-block;vertical-align:middle"><div class="margin-bar-fill" style="width:${pct}%;background:${isOver?'var(--red)':d.isOverhead?'var(--amber)':'var(--accent)'}"></div></div> ${pct.toFixed(1)}%</td></tr>`;
+    if(isOver) html+=`<tr style="background:rgba(220,38,38,0.06)"><td colspan="7" style="font-size:0.6875rem;color:var(--red);padding:0.125rem 0.5rem">&#9888; ${d.assignedFTE.toFixed(1)} FTE assigned vs ${d.peakDemandFTE.toFixed(1)} peak demand &mdash; ${(d.assignedFTE-d.peakDemandFTE).toFixed(1)} FTE over-allocation costed for ${d.overAllocWeeks}w</td></tr>`;
   });
 
   html+=`</tbody></table></div></div>`;
@@ -3481,18 +3534,22 @@ function renderProjectEditor() {
       \u26A0 Resource assignment blocked &mdash; project is <strong>${csInfo.label}</strong>.${recruitNote}
     </div>`;
   }
+  if (!p.overheadRoles) p.overheadRoles = [];
   html+=`<div><div style="font-size:0.875rem;font-weight:700;color:var(--accent);margin-bottom:0.625rem;text-transform:uppercase;letter-spacing:0.5px">FTE Allocation per Phase</div>
-    <div class="fte-editor"><table class="fte-table"><thead><tr><th class="role-th">Role</th>${ftePhases.map(ph=>{const ps=phaseStyle(p,ph);return`<th style="color:${ps.color}">${ph}</th>`;}).join('')}</tr></thead><tbody>`;
+    <div class="fte-editor"><table class="fte-table"><thead><tr><th class="role-th">Role</th><th title="Overhead roles are tracked separately from direct project cost recovery" style="width:3rem;font-size:0.625rem">OH</th>${ftePhases.map(ph=>{const ps=phaseStyle(p,ph);return`<th style="color:${ps.color}">${ph}</th>`;}).join('')}</tr></thead><tbody>`;
   appData.roles.forEach(role=>{
     const fte=p.fte[role]||new Array(ftePhases.length).fill(0);
-    html+=`<tr><td class="role-name" title="${role}">${role}</td>`;
+    const isOH=p.overheadRoles.includes(role);
+    const hasAnyFTE=fte.some(v=>v>0);
+    html+=`<tr${isOH?' style="opacity:0.7"':''}><td class="role-name" title="${role}">${role}</td>`;
+    html+=`<td style="text-align:center"><input type="checkbox" ${isOH?'checked':''} ${hasAnyFTE?'':'disabled'} title="${hasAnyFTE?'Mark as overhead — tracked separately from direct project costs':'No FTE allocated'}" onchange="toggleOverheadRole('${esc(activeProject)}','${esc(role)}',this.checked)"></td>`;
     ftePhases.forEach((phase,pi)=>{
       const v=fte[pi]||0;
       html+=`<td><input type="number" class="fte-input ${v>0?'nonzero':''}" value="${v}" min="0" max="10" step="0.25" onchange="updateFTE('${esc(activeProject)}','${esc(role)}',${pi},+this.value)" oninput="this.className='fte-input'+(+this.value>0?' nonzero':'')"></td>`;
     });
     html+='</tr>';
   });
-  html+='</tbody></table></div></div>';
+  html+='</tbody></table></div><div style="font-size:0.6875rem;color:var(--text3);margin-top:0.25rem"><strong>OH</strong> = Overhead — role is included in project cost tracking but separated from direct cost recovery in financials (e.g. PM, Scrum Master).</div></div>';
   document.getElementById('proj-editor-content').innerHTML=html;
 }
 
@@ -3696,6 +3753,13 @@ function removeAlias(c,a){
 function updateFTE(pn,role,pi,v){
   if(!appData.projects[pn].fte[role])appData.projects[pn].fte[role]=[0,0,0,0];
   appData.projects[pn].fte[role][pi]=v;schedSave();
+}
+function toggleOverheadRole(pn,role,checked){
+  const p=appData.projects[pn];
+  if(!p.overheadRoles)p.overheadRoles=[];
+  if(checked&&!p.overheadRoles.includes(role))p.overheadRoles.push(role);
+  else if(!checked)p.overheadRoles=p.overheadRoles.filter(r=>r!==role);
+  schedSave();
 }
 function addProject(){
   const input=document.getElementById('new-proj-input'),name=input.value.trim();
