@@ -836,6 +836,7 @@ select.form-input{cursor:pointer}
             </select>
           </div>
         </div>
+        <div class="form-row"><label>Max FTE</label><input class="form-input" type="number" id="res-maxfte" value="1.0" min="0.1" max="2" step="0.1" style="width:5rem"></div>
         <div class="form-row"><label>Notes</label><input class="form-input" type="text" id="res-notes" placeholder="e.g. Available from June, NV1 cleared"></div>
         <button class="btn btn-primary" onclick="addResource()" style="margin-top:0.5rem">+ Add Resource</button>
       </div>
@@ -1083,7 +1084,7 @@ select.form-input{cursor:pointer}
 
 <script>
 // ===================== VERSION & GITHUB =====================
-const APP_VERSION = '1.0.7';
+const APP_VERSION = '1.0.8';
 const GITHUB_REPO = 'ChrisFryer/IT-Project-Resource-Planner';
 const GITHUB_URL = 'https://github.com/' + GITHUB_REPO;
 const GITHUB_ISSUES_URL = GITHUB_URL + '/issues';
@@ -1364,7 +1365,7 @@ async function reconnectFile() {
       const text = await file.text();
       const data = JSON.parse(text);
       if (data._meta && data._meta.sessionId && data._meta.sessionId !== SESSION_ID) {
-        showFileConflictBanner('The file was last saved by another session (' + new Date(data._meta.lastSaved).toLocaleTimeString('en-AU') + ').');
+        await showFileConflictBanner('The file was last saved by another session (' + new Date(data._meta.lastSaved).toLocaleTimeString('en-AU') + ').');
         return;
       }
     } catch(e) { /* proceed with save if read fails */ }
@@ -1433,7 +1434,7 @@ async function saveToFileHandle() {
       const check = JSON.parse(text);
       if (!check._meta || check._meta.sessionId !== SESSION_ID) {
         console.warn('File write verification failed — session ID mismatch');
-        showFileConflictBanner('Write verification failed — another process may have overwritten the file.');
+        await showFileConflictBanner('Write verification failed — another process may have overwritten the file.');
         return false;
       }
     } catch(ve) { console.warn('File verification read failed:', ve); }
@@ -1464,29 +1465,134 @@ async function checkFileIntegrity() {
     const text = await file.text();
     const data = JSON.parse(text);
     if (data._meta && data._meta.sessionId && data._meta.sessionId !== SESSION_ID) {
-      showFileConflictBanner('Another session (' + new Date(data._meta.lastSaved).toLocaleTimeString('en-AU') + ') is also editing "' + fileHandle.name + '".');
+      await showFileConflictBanner('Another session (' + new Date(data._meta.lastSaved).toLocaleTimeString('en-AU') + ') is also editing "' + fileHandle.name + '".');
     }
   } catch(e) { /* file may be temporarily locked during write by another session */ }
 }
 
-function showFileConflictBanner(detail) {
+// ---- Conflict diff helpers ----
+function describeDataDiff(local, file) {
+  const diffs = [];
+  // Projects
+  const localProjects = Object.keys(local.projects || {});
+  const fileProjects = Object.keys(file.projects || {});
+  const addedProjects = fileProjects.filter(p => !localProjects.includes(p));
+  const removedProjects = localProjects.filter(p => !fileProjects.includes(p));
+  const commonProjects = localProjects.filter(p => fileProjects.includes(p));
+  if (addedProjects.length) diffs.push({area:'Projects', detail:'New in file: ' + addedProjects.join(', '), favour:'file'});
+  if (removedProjects.length) diffs.push({area:'Projects', detail:'Only in browser: ' + removedProjects.join(', '), favour:'browser'});
+  commonProjects.forEach(p => {
+    const lp = local.projects[p], fp = file.projects[p];
+    const changes = [];
+    if (lp.contractStatus !== fp.contractStatus) changes.push('status: ' + lp.contractStatus + ' → ' + fp.contractStatus);
+    if (lp.projectStartDate !== fp.projectStartDate) changes.push('start date changed');
+    if (JSON.stringify(lp.phases) !== JSON.stringify(fp.phases)) changes.push('phases modified');
+    if (JSON.stringify(lp.fte) !== JSON.stringify(fp.fte)) changes.push('FTE allocations changed');
+    if (JSON.stringify(lp.standdowns||[]) !== JSON.stringify(fp.standdowns||[])) changes.push('standdowns changed');
+    if ((lp.targetMarginPct||25) !== (fp.targetMarginPct||25)) changes.push('margin changed');
+    if (JSON.stringify(lp.overheadRoles||[]) !== JSON.stringify(fp.overheadRoles||[])) changes.push('overhead roles changed');
+    if (changes.length) diffs.push({area:'Project: ' + p, detail: changes.join('; '), favour:'both'});
+  });
+  // Resources
+  const localRes = (local.resources || []);
+  const fileRes = (file.resources || []);
+  const localResIds = new Set(localRes.map(r => r.id));
+  const fileResIds = new Set(fileRes.map(r => r.id));
+  const newInFile = fileRes.filter(r => !localResIds.has(r.id));
+  const onlyInBrowser = localRes.filter(r => !fileResIds.has(r.id));
+  if (newInFile.length) diffs.push({area:'Resources', detail:'New in file: ' + newInFile.map(r=>r.name).join(', '), favour:'file'});
+  if (onlyInBrowser.length) diffs.push({area:'Resources', detail:'Only in browser: ' + onlyInBrowser.map(r=>r.name).join(', '), favour:'browser'});
+  const changedRes = [];
+  localRes.forEach(lr => {
+    const fr = fileRes.find(r => r.id === lr.id);
+    if (!fr) return;
+    const fields = [];
+    if (lr.name !== fr.name) fields.push('name');
+    if (lr.role !== fr.role) fields.push('role');
+    if (lr.salary !== fr.salary || lr.dailyRate !== fr.dailyRate) fields.push('rate');
+    if (lr.state !== fr.state) fields.push('state');
+    if (JSON.stringify(lr.assignments||{}) !== JSON.stringify(fr.assignments||{})) fields.push('assignments');
+    if (fields.length) changedRes.push(lr.name + ' (' + fields.join(', ') + ')');
+  });
+  if (changedRes.length) diffs.push({area:'Resources', detail:'Modified: ' + changedRes.join('; '), favour:'both'});
+  // Roles
+  if (JSON.stringify(local.roles||[]) !== JSON.stringify(file.roles||[])) {
+    diffs.push({area:'Roles', detail:'Role list differs', favour:'both'});
+  }
+  // Settings
+  if (JSON.stringify(local.settings||{}) !== JSON.stringify(file.settings||{})) {
+    diffs.push({area:'Settings', detail:'Configuration differs', favour:'both'});
+  }
+  // Financials
+  if (JSON.stringify(local.projectFinancials||{}) !== JSON.stringify(file.projectFinancials||{})) {
+    diffs.push({area:'Financials', detail:'Financial data differs', favour:'both'});
+  }
+  return diffs;
+}
+
+let _conflictFileData = null; // stashed file data during conflict
+
+async function showFileConflictBanner(detail) {
   fileConflictDetected = true;
   stopFileIntegrityChecks();
   dismissFileConflictBanner();
   updateFileStatus();
+  // Read file data for diff
+  let fileData = null;
+  try {
+    const file = await fileHandle.getFile();
+    const text = await file.text();
+    fileData = JSON.parse(text);
+    delete fileData._meta;
+    _conflictFileData = fileData;
+  } catch(e) { _conflictFileData = null; }
+  const diffs = fileData ? describeDataDiff(appData, fileData) : [];
+  const hasLocalChanges = JSON.stringify(appData) !== lastSavedJSON;
   const banner = document.createElement('div');
   banner.id = 'file-conflict-banner';
-  banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:1000;background:var(--red);color:#fff;padding:0.625rem 1rem;display:flex;align-items:center;justify-content:center;gap:0.75rem;font-size:0.8125rem;font-weight:600;box-shadow:0 2px 12px rgba(0,0,0,0.3)';
-  banner.innerHTML = '<span>&#9888; FILE CONFLICT: ' + detail + ' Saves to this file are paused to prevent data loss.</span>' +
-    '<button onclick="resolveConflictKeepMine()" style="background:#fff;color:var(--red);border:none;border-radius:0.375rem;padding:0.25rem 0.75rem;font-weight:700;cursor:pointer;font-size:0.8125rem" title="Overwrite the file with this session\'s data">Keep Mine</button>' +
-    '<button onclick="resolveConflictReload()" style="background:rgba(255,255,255,0.2);color:#fff;border:1px solid rgba(255,255,255,0.4);border-radius:0.375rem;padding:0.25rem 0.75rem;font-weight:700;cursor:pointer;font-size:0.8125rem" title="Reload data from the file (discard this session\'s unsaved changes)">Load File</button>' +
-    '<button onclick="resolveConflictUnlink()" style="background:transparent;border:none;color:rgba(255,255,255,0.7);cursor:pointer;font-size:0.75rem;text-decoration:underline;padding:0.25rem" title="Disconnect from the file and continue editing in browser only">Unlink File</button>';
+  banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:1000;background:var(--red);color:#fff;padding:0;box-shadow:0 2px 12px rgba(0,0,0,0.3);font-size:0.8125rem';
+  let html = '<div style="padding:0.625rem 1rem;display:flex;align-items:center;justify-content:center;gap:0.75rem;font-weight:600">';
+  html += '<span>&#9888; FILE CONFLICT: ' + detail + ' Saves are paused to prevent data loss.</span>';
+  html += '<button onclick="resolveConflictReload()" style="background:#fff;color:var(--red);border:none;border-radius:0.375rem;padding:0.25rem 0.75rem;font-weight:700;cursor:pointer;font-size:0.8125rem" title="Load data from the file (recommended)">Load File</button>';
+  if (hasLocalChanges) {
+    html += '<button onclick="resolveConflictKeepMineConfirm()" style="background:rgba(255,255,255,0.2);color:#fff;border:1px solid rgba(255,255,255,0.4);border-radius:0.375rem;padding:0.25rem 0.75rem;font-weight:700;cursor:pointer;font-size:0.8125rem" title="Overwrite file with browser data — use with caution">Keep Mine</button>';
+  }
+  html += '<button onclick="resolveConflictUnlink()" style="background:transparent;border:none;color:rgba(255,255,255,0.7);cursor:pointer;font-size:0.75rem;text-decoration:underline;padding:0.25rem" title="Disconnect from the file">Unlink</button>';
+  html += '</div>';
+  // Diff summary
+  if (diffs.length === 0 && !hasLocalChanges) {
+    html += '<div style="padding:0.25rem 1rem 0.5rem;font-size:0.75rem;opacity:0.9">No differences detected — browser and file data appear identical. Safe to load file.</div>';
+  } else if (diffs.length > 0) {
+    html += '<div style="padding:0.25rem 1rem 0.5rem;font-size:0.75rem">';
+    html += '<div style="margin-bottom:0.25rem;opacity:0.85;font-weight:600">Differences between browser and file:</div>';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:0.7rem;color:#fff">';
+    diffs.forEach(d => {
+      const icon = d.favour === 'file' ? '&#128196;' : d.favour === 'browser' ? '&#128187;' : '&#8596;';
+      html += '<tr style="border-top:1px solid rgba(255,255,255,0.2)"><td style="padding:0.15rem 0.5rem;white-space:nowrap;font-weight:600">' + icon + ' ' + esc(d.area) + '</td><td style="padding:0.15rem 0.5rem">' + esc(d.detail) + '</td></tr>';
+    });
+    html += '</table>';
+    if (!hasLocalChanges) {
+      html += '<div style="margin-top:0.25rem;opacity:0.85;font-style:italic">Your browser has no unsaved changes — the file likely has newer data. Loading the file is recommended.</div>';
+    } else {
+      html += '<div style="margin-top:0.25rem;opacity:0.85;font-style:italic">Your browser has unsaved changes. Review the differences above before choosing.</div>';
+    }
+    html += '</div>';
+  } else if (hasLocalChanges) {
+    html += '<div style="padding:0.25rem 1rem 0.5rem;font-size:0.75rem;opacity:0.9">You have unsaved local changes but no structural differences detected. Load file to sync, or keep yours to overwrite.</div>';
+  }
+  banner.innerHTML = html;
   document.body.prepend(banner);
 }
 
 function dismissFileConflictBanner() {
   const b = document.getElementById('file-conflict-banner');
   if (b) b.remove();
+  _conflictFileData = null;
+}
+
+function resolveConflictKeepMineConfirm() {
+  if (!confirm('This will OVERWRITE the file with your browser data, discarding any changes saved by the other session. This cannot be undone.\n\nAre you sure?')) return;
+  resolveConflictKeepMine();
 }
 
 async function resolveConflictKeepMine() {
@@ -1505,18 +1611,23 @@ async function resolveConflictKeepMine() {
 async function resolveConflictReload() {
   if (!fileHandle) return;
   try {
-    const file = await fileHandle.getFile();
-    const text = await file.text();
-    const imported = JSON.parse(text);
-    delete imported._meta;
+    // Use stashed file data if available (already read during conflict detection), otherwise re-read
+    let imported = _conflictFileData;
+    if (!imported) {
+      const file = await fileHandle.getFile();
+      const text = await file.text();
+      imported = JSON.parse(text);
+      delete imported._meta;
+    }
     appData = imported;
     migrateData();
-    saveData(); // saves to localStorage + file (will write our session ID)
-    renderAll();
     fileConflictDetected = false;
     dismissFileConflictBanner();
+    updateFileStatus();
+    saveData(); // saves to localStorage + file (will write our session ID)
+    renderAll();
     startFileIntegrityChecks();
-    toast('Loaded data from ' + file.name, 'success');
+    toast('Loaded data from file', 'success');
   } catch(e) {
     toast('Could not read file: ' + e.message, 'error');
   }
@@ -1820,6 +1931,7 @@ async function tryLoadFromFile(portfolioName) {
 function migrateData() {
   if (!appData.roleAliases) appData.roleAliases = {};
   if (!appData.resources) appData.resources = [];
+  appData.resources.forEach(r => { if (r.maxFTE === undefined) r.maxFTE = 1.0; });
   if (!appData.projectFinancials) appData.projectFinancials = {};
   if (!appData.settings.holidayStates) appData.settings.holidayStates = ['AU-ACT'];
   if (!appData.settings.publicHolidays) appData.settings.publicHolidays = [];
@@ -2519,7 +2631,12 @@ function renderResources() {
   // KPI cards
   const res=appData.resources;
   const counts={assigned:0,'merit-pool':0,interviewing:0,offered:0,available:0};
-  res.forEach(r=>{if(counts[r.status]!==undefined)counts[r.status]++;});
+  let overAllocCount=0;
+  res.forEach(r=>{
+    if(counts[r.status]!==undefined)counts[r.status]++;
+    const aFTE=Object.values(r.assignments||{}).filter(v=>v>0).reduce((s,v)=>s+v,0);
+    if(aFTE>(r.maxFTE||1.0))overAllocCount++;
+  });
   const kpiEl=document.getElementById('res-kpi-cards');
   if(kpiEl)kpiEl.innerHTML=[
     {l:'Assigned',v:counts.assigned,c:'green',clr:'var(--green)'},
@@ -2527,15 +2644,38 @@ function renderResources() {
     {l:'Interviewing',v:counts.interviewing,c:'amber',clr:'var(--amber)'},
     {l:'Offered',v:counts.offered,c:'',clr:'#0077B6'},
     {l:'Available',v:counts.available,c:'accent',clr:'var(--accent)'},
+    {l:'Over-allocated',v:overAllocCount,c:overAllocCount>0?'':'',clr:overAllocCount>0?'var(--red)':'var(--text3)'},
   ].map(k=>`<div class="kpi-card ${k.c}"><div class="kpi-label">${k.l}</div><div class="kpi-value" style="color:${k.clr}">${k.v}</div><div class="kpi-sub">resource${k.v!==1?'s':''}</div></div>`).join('');
 
   // Pool summary by role
   const poolEl=document.getElementById('res-pool-summary');
   if(poolEl){
     const byRole={};
-    res.forEach(r=>{if(!byRole[r.role])byRole[r.role]={total:0,assigned:0,available:0};byRole[r.role].total++;if(r.status==='assigned')byRole[r.role].assigned++;else byRole[r.role].available++;});
-    poolEl.innerHTML=Object.keys(byRole).length===0?'<div style="color:var(--text3);font-size:0.8125rem">No resources added yet.</div>':
-      Object.entries(byRole).map(([role,d])=>`<div class="fin-row"><span class="fin-label">${role}</span><span>${d.assigned} assigned / ${d.available} pool (${d.total} total)</span></div>`).join('');
+    const overAllocatedList=[];
+    res.forEach(r=>{
+      if(!byRole[r.role])byRole[r.role]={total:0,assigned:0,available:0,totalFTE:0,totalMaxFTE:0};
+      byRole[r.role].total++;
+      const aFTE=Object.values(r.assignments||{}).filter(v=>v>0).reduce((s,v)=>s+v,0);
+      const mFTE=r.maxFTE||1.0;
+      byRole[r.role].totalFTE+=aFTE;
+      byRole[r.role].totalMaxFTE+=mFTE;
+      if(r.status==='assigned')byRole[r.role].assigned++;else byRole[r.role].available++;
+      if(aFTE>mFTE)overAllocatedList.push({name:r.name,role:r.role,assigned:aFTE,max:mFTE});
+    });
+    let html=Object.keys(byRole).length===0?'<div style="color:var(--text3);font-size:0.8125rem">No resources added yet.</div>':
+      Object.entries(byRole).map(([role,d])=>{
+        const roleOver=d.totalFTE>d.totalMaxFTE;
+        return `<div class="fin-row"><span class="fin-label">${role}</span><span>${d.assigned} assigned / ${d.available} pool (${d.total} total) &mdash; <span style="color:${roleOver?'var(--red)':'var(--text2)'};font-weight:${roleOver?'700':'400'}">${d.totalFTE.toFixed(2)} / ${d.totalMaxFTE.toFixed(1)} FTE</span></span></div>`;
+      }).join('');
+    if(overAllocatedList.length>0){
+      html+='<div style="margin-top:0.5rem;padding:0.5rem;background:rgba(220,38,38,0.06);border:1px solid rgba(220,38,38,0.2);border-radius:0.375rem">';
+      html+='<div style="font-weight:700;color:var(--red);font-size:0.75rem;margin-bottom:0.25rem">&#9888; Over-allocated Resources ('+overAllocatedList.length+')</div>';
+      overAllocatedList.forEach(o=>{
+        html+=`<div style="font-size:0.75rem;color:var(--text2);padding:0.125rem 0"><strong>${esc(o.name)}</strong> (${esc(o.role)}) &mdash; assigned ${o.assigned.toFixed(2)} FTE, max ${o.max.toFixed(1)} FTE <span style="color:var(--red);font-weight:700">(+${(o.assigned-o.max).toFixed(2)} over)</span></div>`;
+      });
+      html+='</div>';
+    }
+    poolEl.innerHTML=html;
   }
 
   // Resource list
@@ -2553,10 +2693,13 @@ function renderResources() {
     const origIdx=res.indexOf(r);
     const statusLabel={'assigned':'Assigned','merit-pool':'Merit Pool','interviewing':'Interviewing','offered':'Offered','available':'Available'};
     const assignList=Object.entries(r.assignments||{}).filter(([k,v])=>v>0);
+    const totalAssignedFTE=assignList.reduce((s,[,v])=>s+v,0);
+    const maxFTE=r.maxFTE||1.0;
+    const isOverAllocated=totalAssignedFTE>maxFTE;
     const burden=calcBurdenRate(r);
     const resType=r.resourceType||'permanent';
     const typeLabel=RESOURCE_TYPES[resType]?.label||resType;
-    return `<div class="resource-card">
+    return `<div class="resource-card" style="${isOverAllocated?'border-left:4px solid var(--red);background:rgba(220,38,38,0.04)':''}">
       <div class="res-header">
         <div>
           <span class="res-name">${r.name}</span>
@@ -2579,6 +2722,8 @@ function renderResources() {
             <option value="">State</option>
             ${AU_STATE_CODES.map(c=>`<option value="${c}" ${r.state===c?'selected':''}>${AU_STATES[c]}</option>`).join('')}
           </select>
+          <span style="font-size:0.6875rem;color:var(--text3);white-space:nowrap" title="Maximum FTE capacity for this resource">Max:<input class="form-input" type="number" value="${maxFTE}" min="0.1" max="2" step="0.1" style="width:3.5rem;font-size:0.6875rem;padding:0.125rem 0.25rem;margin-left:0.125rem" onchange="updateResourceField(${origIdx},'maxFTE',+this.value);renderResources()"></span>
+          ${isOverAllocated?`<span style="background:var(--red);color:#fff;padding:0.125rem 0.5rem;border-radius:0.5rem;font-size:0.625rem;font-weight:700;white-space:nowrap" title="Assigned ${totalAssignedFTE.toFixed(2)} FTE across projects, exceeds max ${maxFTE} FTE">OVER ${totalAssignedFTE.toFixed(2)}/${maxFTE} FTE</span>`:''}
           <button class="btn btn-sm" style="color:var(--red);border-color:var(--red-bg)" onclick="deleteResource(${origIdx})">&times;</button>
         </div>
       </div>
@@ -2593,7 +2738,7 @@ function renderResources() {
         ${burden.totalBurdenPct>0?`<span style="position:relative;cursor:pointer" onclick="this.querySelector('.burden-tip').classList.toggle('show')">Uplift: <strong>${burden.totalBurdenPct.toFixed(2)}%</strong> <span style="color:var(--accent)">&#9432;</span><span class="burden-tip">${Object.entries(burden.breakdown).map(([k,v])=>'<div style=\\"display:flex;justify-content:space-between;gap:1rem\\"><span>'+k+'</span><strong>'+v.toFixed(2)+'%</strong></div>').join('')}<div style="border-top:1px solid var(--border);margin-top:0.25rem;padding-top:0.25rem;display:flex;justify-content:space-between"><span style=\\"font-weight:700\\">Total</span><strong style=\\"color:var(--accent)\\">${burden.totalBurdenPct.toFixed(2)}%</strong></div></span></span>`:''}
         ${r.notes?`<span>${r.notes}</span>`:''}
       </div>
-      ${assignList.length>0?`<div style="margin-bottom:0.375rem">${assignList.map(([proj,fte])=>`<span class="assignment-row"><span class="assignment-proj">${shortName(proj,30)}</span> ${fte} FTE</span>`).join('')}</div>`:''}
+      ${assignList.length>0?`<div style="margin-bottom:0.375rem">${assignList.map(([proj,fte])=>`<span class="assignment-row"><span class="assignment-proj">${shortName(proj,30)}</span> ${fte} FTE</span>`).join('')}<span style="font-size:0.6875rem;color:${isOverAllocated?'var(--red)':'var(--text3)'};font-weight:${isOverAllocated?'700':'400'};margin-left:0.25rem">(${totalAssignedFTE.toFixed(2)} / ${maxFTE} FTE)</span></div>`:''}
       <div style="display:flex;gap:0.375rem;flex-wrap:wrap;margin-bottom:0.375rem">
         <select class="form-input" style="max-width:12rem;font-size:0.75rem;padding:0.1875rem" id="assign-proj-${origIdx}">
           ${Object.keys(appData.projects).map(p=>{const pcs=CONTRACT_STATUSES[appData.projects[p].contractStatus||'contracted'];return `<option value="${p}" ${!pcs.canAssign?'disabled':''}>${shortName(p,30)}${!pcs.canAssign?' ['+pcs.label+']':''}</option>`;}).join('')}
@@ -2634,6 +2779,7 @@ function addResource(){
   let dailyRate=+(document.getElementById('res-rate').value)||0;
   const hourlyInput=+(document.getElementById('res-hourly').value)||0;
   const state=document.getElementById('res-state').value;
+  const maxFTE=+(document.getElementById('res-maxfte').value)||1.0;
   const notes=document.getElementById('res-notes').value.trim();
   const isContractor = resourceType==='contractor' || resourceType==='contractorPT';
 
@@ -2656,8 +2802,8 @@ function addResource(){
   }
 
   if(!appData.resources)appData.resources=[];
-  appData.resources.push({id:'r'+Date.now(),name,role,status,resourceType,salary,dailyRate,state,assignments:{},comments:[],notes});
-  document.getElementById('res-name').value='';document.getElementById('res-salary').value='';document.getElementById('res-rate').value='';document.getElementById('res-hourly').value='';document.getElementById('res-notes').value='';
+  appData.resources.push({id:'r'+Date.now(),name,role,status,resourceType,salary,dailyRate,state,maxFTE,assignments:{},comments:[],notes});
+  document.getElementById('res-name').value='';document.getElementById('res-salary').value='';document.getElementById('res-rate').value='';document.getElementById('res-hourly').value='';document.getElementById('res-maxfte').value='1.0';document.getElementById('res-notes').value='';
   schedSave();toast('Resource added: '+name,'info');
 }
 function deleteResource(idx){if(!confirm('Delete this resource?'))return;appData.resources.splice(idx,1);schedSave();toast('Resource removed','info');}
