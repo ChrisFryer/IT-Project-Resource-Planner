@@ -734,6 +734,7 @@ select.form-input{cursor:pointer}
         <div class="table-wrap"><table class="data-table" id="phase-summary-table"></table></div>
       </div>
     </div>
+    <div id="phase-overlap-warnings" style="margin-top:0.75rem;padding:0.5rem 0.75rem;background:rgba(245,158,11,0.06);border:1px solid rgba(245,158,11,0.2);border-radius:0.5rem"></div>
     <div class="print-section" style="margin-top:1.25rem">
       <div style="font-weight:700;font-size:0.875rem;color:var(--accent);margin-bottom:0.75rem;text-transform:uppercase;letter-spacing:1px">Recruitment Status Summary</div>
       <div class="cards-row" id="recruit-kpi-cards"></div>
@@ -783,6 +784,7 @@ select.form-input{cursor:pointer}
     <div class="section-title">Recruitment & Onboarding Planner</div>
     <div class="section-sub" id="recruit-sub">Loading...</div>
     <button class="print-btn" onclick="printReport('recruit')" title="Print this page as a report">&#128424; Print Report</button>
+    <div id="recruit-overlap-warnings" style="display:none;margin-bottom:0.75rem;padding:0.5rem 0.75rem;background:rgba(245,158,11,0.06);border:1px solid rgba(245,158,11,0.2);border-radius:0.5rem"></div>
     <div class="table-wrap"><table class="data-table" id="recruit-table"></table></div>
     <div style="margin-top:1.125rem;padding:0.875rem 1.125rem;background:var(--surface);border:1px solid var(--border);border-radius:0.625rem">
       <div style="font-size:0.8125rem;color:var(--text2);line-height:1.9">
@@ -1084,7 +1086,7 @@ select.form-input{cursor:pointer}
 
 <script>
 // ===================== VERSION & GITHUB =====================
-const APP_VERSION = '1.0.8';
+const APP_VERSION = '1.1.0';
 const GITHUB_REPO = 'ChrisFryer/IT-Project-Resource-Planner';
 const GITHUB_URL = 'https://github.com/' + GITHUB_REPO;
 const GITHUB_ISSUES_URL = GITHUB_URL + '/issues';
@@ -1989,6 +1991,12 @@ function migrateData() {
     if (r.dailyRate === undefined) r.dailyRate = 0;
     if (!r.state) r.state = '';
     if (!r.resourceType) r.resourceType = r.dailyRate > 0 && r.salary === 0 ? 'contractor' : 'permanent';
+    // Migrate old flat assignments {proj: fte} to multi-role format {proj: [{role, fte}]}
+    Object.entries(r.assignments).forEach(([pn, val]) => {
+      if (typeof val === 'number') {
+        r.assignments[pn] = [{ role: r.role, fte: val }];
+      }
+    });
   });
 }
 
@@ -2092,15 +2100,24 @@ function getFTE(projectName, roleIdx, week) {
   const role = appData.roles[roleIdx];
   const resolved = resolvePhases(proj);
   const phases = getProjectPhases(proj);
-  let total = 0;
+  const shared = proj.sharedPhases || [];
+  let sharedMax = 0;  // max FTE across shared phases active this week
+  let nonSharedTotal = 0;  // sum of FTE from non-shared phases active this week
   phases.forEach((phase, pi) => {
     const ph = resolved[phase];
     if (week >= ph.start && week < ph.end) {
       const fte = proj.fte[role];
-      if (fte) total += fte[pi] || 0;
+      const val = (fte && fte[pi]) || 0;
+      if (val > 0) {
+        if (shared.includes(phase)) {
+          sharedMax = Math.max(sharedMax, val);
+        } else {
+          nonSharedTotal += val;
+        }
+      }
     }
   });
-  return total;
+  return sharedMax + nonSharedTotal;
 }
 
 // statusFilter: null=all, or a Set of contractStatus values to include
@@ -2166,64 +2183,113 @@ function getFreezesInWeek(proj, weekIdx) {
   });
 }
 
+function classifyRecruitmentStatus(role, peak, assignedFTE, pipelineCount, weeksUntil, stdTotal, meritTotal, onboardWeeks) {
+  const coveredFTE = assignedFTE + pipelineCount;
+  const filled = assignedFTE >= peak;
+  const partiallyFilled = assignedFTE > 0 && assignedFTE < peak;
+  const hasPipeline = pipelineCount > 0;
+  let status, statusClass, action;
+  if (filled) { status = '\u2713 Filled'; statusClass = 'status-ok'; action = `${assignedFTE.toFixed(1)} FTE assigned \u2014 fully covered`; }
+  else if (coveredFTE >= peak && hasPipeline) {
+    status = '\u25D1 In Pipeline'; statusClass = 'status-ok'; action = `${assignedFTE.toFixed(1)} assigned + ${pipelineCount} in pipeline (${peak.toFixed(1)} needed) \u2014 assign to projects`;
+  }
+  else if (partiallyFilled || hasPipeline) {
+    const totalCover = assignedFTE + pipelineCount;
+    const remaining = Math.max(0, peak - totalCover).toFixed(1);
+    const parts = [];
+    if (assignedFTE > 0) parts.push(assignedFTE.toFixed(1) + ' assigned');
+    if (pipelineCount > 0) parts.push(pipelineCount + ' in pipeline');
+    const coverDesc = parts.join(' + ');
+    if (totalCover >= peak) { status = '\u25D1 In Pipeline'; statusClass = 'status-ok'; action = `${coverDesc} (${peak.toFixed(1)} needed) \u2014 assign to projects`; }
+    else if (weeksUntil >= stdTotal) { status = '\u25D1 Partial'; statusClass = 'status-warn'; action = `${coverDesc} of ${peak.toFixed(1)} needed \u2014 recruit ${remaining} more (on track)`; }
+    else if (weeksUntil >= meritTotal) { status = '\u25D1 Partial'; statusClass = 'status-warn'; action = `${coverDesc} of ${peak.toFixed(1)} needed \u2014 merit pool for ${remaining} remaining`; }
+    else { status = '\u25D1 Partial'; statusClass = 'status-danger'; action = `${coverDesc} of ${peak.toFixed(1)} needed \u2014 urgently recruit ${remaining} more`; }
+  }
+  else if (weeksUntil >= stdTotal) { status = '\u2713 On Track'; statusClass = 'status-ok'; action = 'Add to merit pool / advertise at W-' + stdTotal; }
+  else if (weeksUntil >= meritTotal) { status = '\u26A0 Merit Pool Only'; statusClass = 'status-warn'; action = 'Advertise via merit pool now'; }
+  else if (weeksUntil >= onboardWeeks) { status = '! Urgent'; statusClass = 'status-danger'; action = 'Identify candidate & start onboarding now'; }
+  else { status = '!! Overdue'; statusClass = 'status-critical'; action = 'CRITICAL \u2013 resource must be in place'; }
+  return { status, statusClass, action, filled, coveredFTE, partiallyFilled, hasPipeline };
+}
+
+// Portfolio-level recruitment data (one row per role aggregated across projects)
 function getRecruitmentData(wd, statusFilter) {
   const S = appData.settings;
   const today = parseDate(S.todayDate);
   const resources = appData.resources || [];
   return appData.roles.map((role, ri) => {
     let firstWeek = null;
-    for (let w=0; w<S.totalWeeks; w++) { if (wd[ri][w]>0){firstWeek=w;break;} }
-    if (firstWeek===null) return null;
+    for (let w = 0; w < S.totalWeeks; w++) { if (wd[ri][w] > 0) { firstWeek = w; break; } }
+    if (firstWeek === null) return null;
     const peak = Math.max(...wd[ri]);
     const firstDate = weekDate(firstWeek);
     const projects = Object.keys(appData.projects).filter(pn => {
-      const p=appData.projects[pn];
-      if (statusFilter) { const cs=p.contractStatus||'contracted'; if(!statusFilter.has(cs)) return false; }
-      return p.fte[role]&&p.fte[role].some(v=>v>0);
+      const p = appData.projects[pn];
+      if (statusFilter) { const cs = p.contractStatus || 'contracted'; if (!statusFilter.has(cs)) return false; }
+      return p.fte[role] && p.fte[role].some(v => v > 0);
     });
-
-    // Calculate assigned FTE for this role (resources with project assignments)
-    const assignedFTE = resources.filter(r => r.role === role && r.status === 'assigned' && r.assignments)
-      .reduce((sum, r) => sum + Object.values(r.assignments).reduce((a, v) => a + (v || 0), 0), 0);
-    // Count pipeline resources (available, merit-pool, interviewing, offered) — each counts as 1 potential FTE
-    const pipelineCount = resources.filter(r => r.role === role && r.status !== 'assigned').length;
-    const coveredFTE = assignedFTE + pipelineCount;
-    const filled = assignedFTE >= peak;
-    const partiallyFilled = assignedFTE > 0 && assignedFTE < peak;
-    const hasPipeline = pipelineCount > 0;
-
+    const projectSet = new Set(projects);
+    // Find resources assigned to this role (may be assigned in a different primary role but performing this role on a project)
+    const assignedResources = resources.filter(r => r.status === 'assigned' && getAssignmentList(r).some(a => a.role === role && projectSet.has(a.project)));
+    const assignedFTE = assignedResources.reduce((sum, r) => {
+      return sum + getAssignmentList(r).filter(a => a.role === role && projectSet.has(a.project)).reduce((s, a) => s + a.fte, 0);
+    }, 0);
+    const pipelineResources = resources.filter(r => r.role === role && r.status !== 'assigned');
+    const pipelineCount = pipelineResources.length;
     let onboardWeeks = 2;
-    projects.forEach(pn => { const p=appData.projects[pn]; if(p.onboardWeeks>onboardWeeks) onboardWeeks=p.onboardWeeks; });
+    projects.forEach(pn => { const p = appData.projects[pn]; if (p.onboardWeeks > onboardWeeks) onboardWeeks = p.onboardWeeks; });
     const stdTotal = S.recruitStandardWeeks + onboardWeeks;
     const meritTotal = S.recruitMeritWeeks + onboardWeeks;
-    const stdRecruitBy = new Date(firstDate); stdRecruitBy.setDate(stdRecruitBy.getDate()-stdTotal*7);
-    const meritRecruitBy = new Date(firstDate); meritRecruitBy.setDate(meritRecruitBy.getDate()-meritTotal*7);
-    const onboardBy = new Date(firstDate); onboardBy.setDate(onboardBy.getDate()-onboardWeeks*7);
-    const weeksUntil = Math.floor(daysBetween(today,firstDate)/7);
-    let status,statusClass,action;
-    if(filled){status='\u2713 Filled';statusClass='status-ok';action=`${assignedFTE.toFixed(1)} FTE assigned \u2014 fully covered`;}
-    else if(coveredFTE>=peak && hasPipeline){
-      // Enough resources assigned + in pipeline to cover demand
-      status='\u25D1 In Pipeline';statusClass='status-ok';action=`${assignedFTE.toFixed(1)} assigned + ${pipelineCount} in pipeline (${peak.toFixed(1)} needed) \u2014 assign to projects`;
-    }
-    else if(partiallyFilled || hasPipeline){
-      const totalCover=assignedFTE+pipelineCount;
-      const remaining=Math.max(0,peak-totalCover).toFixed(1);
-      const parts=[];
-      if(assignedFTE>0) parts.push(assignedFTE.toFixed(1)+' assigned');
-      if(pipelineCount>0) parts.push(pipelineCount+' in pipeline');
-      const coverDesc=parts.join(' + ');
-      if(totalCover>=peak){status='\u25D1 In Pipeline';statusClass='status-ok';action=`${coverDesc} (${peak.toFixed(1)} needed) \u2014 assign to projects`;}
-      else if(weeksUntil>=stdTotal){status='\u25D1 Partial';statusClass='status-warn';action=`${coverDesc} of ${peak.toFixed(1)} needed \u2014 recruit ${remaining} more (on track)`;}
-      else if(weeksUntil>=meritTotal){status='\u25D1 Partial';statusClass='status-warn';action=`${coverDesc} of ${peak.toFixed(1)} needed \u2014 merit pool for ${remaining} remaining`;}
-      else{status='\u25D1 Partial';statusClass='status-danger';action=`${coverDesc} of ${peak.toFixed(1)} needed \u2014 urgently recruit ${remaining} more`;}
-    }
-    else if(weeksUntil>=stdTotal){status='\u2713 On Track';statusClass='status-ok';action='Add to merit pool / advertise at W-'+stdTotal;}
-    else if(weeksUntil>=meritTotal){status='\u26A0 Merit Pool Only';statusClass='status-warn';action='Advertise via merit pool now';}
-    else if(weeksUntil>=onboardWeeks){status='! Urgent';statusClass='status-danger';action='Identify candidate & start onboarding now';}
-    else{status='!! Overdue';statusClass='status-critical';action='CRITICAL \u2013 resource must be in place';}
-    return {role,firstWeek,firstDate,peak,assignedFTE,pipelineCount,coveredFTE,filled,stdRecruitBy,meritRecruitBy,onboardBy,weeksUntil,status,statusClass,action,projects,stdTotal,meritTotal,onboardWeeks};
+    const stdRecruitBy = new Date(firstDate); stdRecruitBy.setDate(stdRecruitBy.getDate() - stdTotal * 7);
+    const meritRecruitBy = new Date(firstDate); meritRecruitBy.setDate(meritRecruitBy.getDate() - meritTotal * 7);
+    const onboardBy = new Date(firstDate); onboardBy.setDate(onboardBy.getDate() - onboardWeeks * 7);
+    const weeksUntil = Math.floor(daysBetween(today, firstDate) / 7);
+    const cls = classifyRecruitmentStatus(role, peak, assignedFTE, pipelineCount, weeksUntil, stdTotal, meritTotal, onboardWeeks);
+    return { role, firstWeek, firstDate, peak, assignedFTE, pipelineCount, coveredFTE: cls.coveredFTE, filled: cls.filled, stdRecruitBy, meritRecruitBy, onboardBy, weeksUntil, status: cls.status, statusClass: cls.statusClass, action: cls.action, projects, stdTotal, meritTotal, onboardWeeks, assignedResources, pipelineResources };
   });
+}
+
+// Per-project recruitment data (one row per project×role combination)
+function getRecruitmentDataByProject(statusFilter) {
+  const S = appData.settings;
+  const today = parseDate(S.todayDate);
+  const resources = appData.resources || [];
+  const results = [];
+  Object.entries(appData.projects).forEach(([pn, p]) => {
+    if (statusFilter) { const cs = p.contractStatus || 'contracted'; if (!statusFilter.has(cs)) return; }
+    const resolved = resolvePhases(p);
+    const pPhases = getProjectPhases(p);
+    const onboardWeeks = p.onboardWeeks || 2;
+    const stdTotal = S.recruitStandardWeeks + onboardWeeks;
+    const meritTotal = S.recruitMeritWeeks + onboardWeeks;
+    appData.roles.forEach(role => {
+      const fteArr = p.fte[role] || [];
+      const peak = Math.max(0, ...fteArr);
+      if (peak <= 0) return;
+      // Find first week this role is needed in this project
+      let firstWeek = null;
+      const shared = p.sharedPhases || [];
+      pPhases.forEach((phase, pi) => {
+        const ph = resolved[phase];
+        if (ph && (fteArr[pi] || 0) > 0 && (firstWeek === null || ph.start < firstWeek)) firstWeek = ph.start;
+      });
+      if (firstWeek === null) return;
+      const firstDate = weekDate(firstWeek);
+      // Assigned FTE for this role on THIS project
+      const assignedResources = resources.filter(r => r.status === 'assigned' && getProjectRoleFTE(r, pn, role) > 0);
+      const assignedFTE = assignedResources.reduce((s, r) => s + getProjectRoleFTE(r, pn, role), 0);
+      // Pipeline resources for this role (not project-specific)
+      const pipelineResources = resources.filter(r => r.role === role && r.status !== 'assigned');
+      const pipelineCount = pipelineResources.length;
+      const stdRecruitBy = new Date(firstDate); stdRecruitBy.setDate(stdRecruitBy.getDate() - stdTotal * 7);
+      const meritRecruitBy = new Date(firstDate); meritRecruitBy.setDate(meritRecruitBy.getDate() - meritTotal * 7);
+      const onboardBy = new Date(firstDate); onboardBy.setDate(onboardBy.getDate() - onboardWeeks * 7);
+      const weeksUntil = Math.floor(daysBetween(today, firstDate) / 7);
+      const cls = classifyRecruitmentStatus(role, peak, assignedFTE, pipelineCount, weeksUntil, stdTotal, meritTotal, onboardWeeks);
+      results.push({ project: pn, role, firstWeek, firstDate, peak, assignedFTE, pipelineCount, coveredFTE: cls.coveredFTE, filled: cls.filled, stdRecruitBy, meritRecruitBy, onboardBy, weeksUntil, status: cls.status, statusClass: cls.statusClass, action: cls.action, stdTotal, meritTotal, onboardWeeks, assignedResources, pipelineResources });
+    });
+  });
+  return results;
 }
 
 // ===================== THEME =====================
@@ -2245,6 +2311,126 @@ function loadTheme() {
 
 // ===================== RENDERS =====================
 function renderAll() { renderOverview(); renderGantt(); renderWeeklyHeatmap(); renderMonthlyHeatmap(); renderRecruitmentPlanner(); renderResources(); renderFinancials(); renderEditor(); }
+
+// ===================== PHASE OVERLAP DETECTION =====================
+function getPhaseOverlapWarnings(filterProject) {
+  const warnings = [];
+  const projects = filterProject ? [[filterProject, appData.projects[filterProject]]] : Object.entries(appData.projects);
+  projects.forEach(([pn, p]) => {
+    if (!p) return;
+    const resolved = resolvePhases(p);
+    const pPhases = getProjectPhases(p);
+    const shared = p.sharedPhases || [];
+    for (let i = 0; i < pPhases.length; i++) {
+      for (let j = i + 1; j < pPhases.length; j++) {
+        const a = resolved[pPhases[i]], b = resolved[pPhases[j]];
+        if (!a || !b || a.weeks <= 0 || b.weeks <= 0) continue;
+        const overlapStart = Math.max(a.start, b.start);
+        const overlapEnd = Math.min(a.end, b.end);
+        if (overlapEnd <= overlapStart) continue;
+        const overlapWeeks = overlapEnd - overlapStart;
+        const isShared = shared.includes(pPhases[i]) || shared.includes(pPhases[j]);
+        const piA = i, piB = j;
+        const stackedRoles = [];
+        appData.roles.forEach(role => {
+          const f = p.fte[role];
+          if (!f) return;
+          const fteA = f[piA] || 0, fteB = f[piB] || 0;
+          if (fteA > 0 && fteB > 0) stackedRoles.push({ role, fteA, fteB, combined: fteA + fteB });
+        });
+        if (stackedRoles.length > 0) {
+          warnings.push({ project: pn, phaseA: pPhases[i], phaseB: pPhases[j], overlapWeeks, stackedRoles, isShared });
+        }
+      }
+    }
+  });
+  return warnings;
+}
+
+function getResourceOverlapWarnings(r) {
+  const warnings = [];
+  const assignments = getAssignmentList(r);
+  if (assignments.length < 2) return warnings;
+  // Group assignments by project
+  const byProj = {};
+  assignments.forEach(a => {
+    if (!byProj[a.project]) byProj[a.project] = [];
+    byProj[a.project].push(a);
+  });
+  Object.entries(byProj).forEach(([pn, projAssigns]) => {
+    if (projAssigns.length < 2) return; // need multiple roles on same project
+    const proj = appData.projects[pn];
+    if (!proj) return;
+    const resolved = resolvePhases(proj);
+    const phases = getProjectPhases(proj);
+    const shared = proj.sharedPhases || [];
+    // For each pair of roles this resource holds on this project, check phase overlaps
+    for (let i = 0; i < projAssigns.length; i++) {
+      for (let j = i + 1; j < projAssigns.length; j++) {
+        const roleA = projAssigns[i], roleB = projAssigns[j];
+        // Find phases where each role has FTE > 0
+        const phasesA = [], phasesB = [];
+        phases.forEach((phase, pi) => {
+          const fA = (proj.fte[roleA.role] && proj.fte[roleA.role][pi]) || 0;
+          const fB = (proj.fte[roleB.role] && proj.fte[roleB.role][pi]) || 0;
+          if (fA > 0) phasesA.push({ phase, pi, fte: fA, ...resolved[phase] });
+          if (fB > 0) phasesB.push({ phase, pi, fte: fB, ...resolved[phase] });
+        });
+        // Check if any of roleA's phases overlap with roleB's phases
+        phasesA.forEach(pA => {
+          phasesB.forEach(pB => {
+            const overlapStart = Math.max(pA.start, pB.start);
+            const overlapEnd = Math.min(pA.end, pB.end);
+            if (overlapEnd <= overlapStart) return;
+            // Same phase: both roles active concurrently (not a shared-phase issue)
+            const isShared = pA.pi !== pB.pi && (shared.includes(pA.phase) || shared.includes(pB.phase));
+            const combinedFTE = roleA.fte + roleB.fte;
+            const maxFTE = r.maxFTE || 1.0;
+            warnings.push({
+              project: pn, resource: r.name,
+              roleA: roleA.role, roleB: roleB.role,
+              phaseA: pA.phase, phaseB: pB.phase,
+              samePhase: pA.pi === pB.pi,
+              overlapWeeks: overlapEnd - overlapStart,
+              combinedFTE, maxFTE, isShared,
+              isOverCommitted: combinedFTE > maxFTE
+            });
+          });
+        });
+      }
+    }
+  });
+  return warnings;
+}
+
+function renderOverlapWarningsHTML(warnings, compact) {
+  const active = warnings.filter(w => !w.isShared);
+  const suppressed = warnings.filter(w => w.isShared);
+  if (warnings.length === 0) return '';
+  let html = '';
+  if (active.length > 0) {
+    if (compact) {
+      html += active.map(w => {
+        const topRoles = w.stackedRoles.slice(0, 3);
+        const moreCount = w.stackedRoles.length - 3;
+        const roleList = topRoles.map(r => `<strong>${esc(r.role)}</strong> ${r.combined.toFixed(1)}`).join(', ') + (moreCount > 0 ? ` +${moreCount} more` : '');
+        return `<div style="font-size:0.6875rem;padding:0.1875rem 0;border-bottom:1px solid var(--border)"><strong>${esc(w.project)}</strong>: ${w.phaseA} \u2194 ${w.phaseB} (${w.overlapWeeks}w) \u2014 ${roleList}</div>`;
+      }).join('');
+    } else {
+      html += '<table style="width:100%;font-size:0.75rem;border-collapse:collapse">';
+      html += '<thead><tr style="color:var(--text3);font-size:0.625rem;text-transform:uppercase"><th style="text-align:left;padding:0.25rem">Project</th><th style="text-align:left;padding:0.25rem">Overlap</th><th style="text-align:right;padding:0.25rem">Weeks</th><th style="text-align:left;padding:0.25rem">Stacked Roles</th></tr></thead><tbody>';
+      active.forEach(w => {
+        const roleList = w.stackedRoles.map(r => `<span style="white-space:nowrap"><strong>${esc(r.role)}</strong>: <span style="color:var(--red);font-weight:700">${r.combined.toFixed(1)}</span></span>`).join(', ');
+        html += `<tr style="border-top:1px solid var(--border)"><td style="padding:0.25rem;font-weight:600">${esc(w.project)}</td><td style="padding:0.25rem"><span style="color:var(--amber)">${w.phaseA}</span> \u2194 <span style="color:var(--amber)">${w.phaseB}</span></td><td style="padding:0.25rem;text-align:right;font-weight:600">${w.overlapWeeks}w</td><td style="padding:0.25rem">${roleList}</td></tr>`;
+      });
+      html += '</tbody></table>';
+    }
+  }
+  if (suppressed.length > 0) {
+    html += `<div style="font-size:0.625rem;color:var(--text3);margin-top:0.375rem;font-style:italic">${suppressed.length} overlap${suppressed.length > 1 ? 's' : ''} suppressed by Shared phase setting (${suppressed.map(w => esc(w.project) + ': ' + w.phaseA + ' \u2194 ' + w.phaseB).join('; ')})</div>`;
+  }
+  return html;
+}
 
 function renderOverview() {
   renderPhaseLegend();
@@ -2335,54 +2521,97 @@ function renderOverview() {
     return `<tr><td><span class="badge" style="background:${ps.bg};color:${ps.color}">${phase}</span></td><td class="num-cell text-accent" style="font-weight:700">${tf.toFixed(2)}</td><td style="font-size:0.8125rem;color:var(--text2)">${projs.join(', ')}</td></tr>`;
   }).join('')}</tbody>`;
 
-  const rd=getRecruitmentData(committedWD,RECRUIT_STATUSES).filter(Boolean), counts={filled:0,pipeline:0,ok:0,recruit:0,urgent:0,overdue:0};
+  // Phase overlap warnings
+  const overlapWarnings = getPhaseOverlapWarnings();
+  const overlapEl = document.getElementById('phase-overlap-warnings');
+  if (overlapEl) {
+    const activeOverlaps = overlapWarnings.filter(w => !w.isShared);
+    if (overlapWarnings.length > 0) {
+      overlapEl.style.display = '';
+      const count = activeOverlaps.length;
+      overlapEl.innerHTML = `<div style="display:flex;align-items:center;gap:0.5rem;cursor:pointer" onclick="var b=document.getElementById('overlap-detail');b.style.display=b.style.display==='none'?'block':'none'">
+        <span style="font-weight:700;font-size:0.75rem;color:var(--amber);text-transform:uppercase">&#9888; Phase Overlap Warnings (${count} active)</span>
+        <span style="font-size:0.625rem;color:var(--accent)">click to ${count > 0 ? 'expand' : 'view'}</span>
+      </div>
+      <div id="overlap-detail" style="display:none;margin-top:0.375rem">${renderOverlapWarningsHTML(overlapWarnings, false)}</div>`;
+    } else {
+      overlapEl.innerHTML = '';
+      overlapEl.style.display = 'none';
+    }
+  }
+
+  const rd=getRecruitmentDataByProject(RECRUIT_STATUSES);
+  const buckets={filled:[],pipeline:[],partial:[],ok:[],recruit:[],urgent:[],overdue:[]};
   rd.forEach(r=>{
-    if(r.filled)counts.filled++;
-    else if(r.coveredFTE>=r.peak && r.pipelineCount>0)counts.pipeline++;
-    else if(r.statusClass==='status-ok')counts.ok++;
-    else if(r.statusClass==='status-warn')counts.recruit++;
-    else if(r.statusClass==='status-danger')counts.urgent++;
-    else counts.overdue++;
+    if(r.filled) buckets.filled.push(r);
+    else if(r.pipelineCount>0) buckets.pipeline.push(r);
+    else if(r.assignedFTE>0) buckets.partial.push(r);
+    else if(r.statusClass==='status-ok') buckets.ok.push(r);
+    else if(r.statusClass==='status-warn') buckets.recruit.push(r);
+    else if(r.statusClass==='status-danger') buckets.urgent.push(r);
+    else buckets.overdue.push(r);
   });
-  const needsAction=counts.recruit+counts.urgent+counts.overdue;
-  const covered=counts.filled+counts.pipeline+counts.ok;
-  document.getElementById('recruit-kpi-cards').innerHTML=`
-    <div class="kpi-card ${needsAction===0?'green':'red'}">
-      <div class="kpi-label">Needs Attention</div>
-      <div class="kpi-value" style="color:${needsAction===0?'var(--green)':'var(--red)'}">${needsAction}</div>
-      <div class="kpi-sub">of ${rd.length} active role${rd.length!==1?'s':''}</div>
-    </div>
-    <div class="kpi-card green" title="Resource assigned to project and covers peak demand">
-      <div class="kpi-label">Filled</div>
-      <div class="kpi-value" style="color:var(--green)">${counts.filled}</div>
-      <div class="kpi-sub" style="font-size:0.625rem;color:var(--text3)">Assigned to projects</div>
-    </div>
-    <div class="kpi-card green" title="Resource identified (available, interviewing, or offered) but not yet assigned to a project">
-      <div class="kpi-label">In Pipeline</div>
-      <div class="kpi-value" style="color:var(--green)">${counts.pipeline}</div>
-      <div class="kpi-sub" style="font-size:0.625rem;color:var(--text3)">Identified, not yet assigned</div>
-    </div>
-    <div class="kpi-card" title="No resource yet, but enough lead time remains to recruit via standard or merit pool process">
-      <div class="kpi-label">On Track</div>
-      <div class="kpi-value" style="color:var(--green)">${counts.ok}</div>
-      <div class="kpi-sub" style="font-size:0.625rem;color:var(--text3)">Time to recruit normally</div>
-    </div>
-    <div class="kpi-card amber" title="Standard recruitment window has passed — only merit pool / direct sourcing can fill in time. Recruitment must start immediately.">
-      <div class="kpi-label">Recruit Now</div>
-      <div class="kpi-value" style="color:var(--amber)">${counts.recruit}</div>
-      <div class="kpi-sub" style="font-size:0.625rem;color:var(--text3)">Merit pool window only</div>
-    </div>
-    <div class="kpi-card" title="Only onboarding time remains — a candidate must be identified and onboarding started immediately to avoid project delays.">
-      <div class="kpi-label">Urgent</div>
-      <div class="kpi-value" style="color:var(--red)">${counts.urgent}</div>
-      <div class="kpi-sub" style="font-size:0.625rem;color:var(--text3)">Onboard window only</div>
-    </div>
-    <div class="kpi-card red" title="The role was needed before recruitment + onboarding could complete. Project timelines are at risk of slipping without immediate action.">
-      <div class="kpi-label">Overdue</div>
-      <div class="kpi-value" style="color:var(--red)">${counts.overdue}</div>
-      <div class="kpi-sub" style="font-size:0.625rem;color:var(--text3)">Timeline at risk</div>
-    </div>
-  `;
+  const needsAction=buckets.recruit.length+buckets.urgent.length+buckets.overdue.length;
+
+  function recruitRoleDetail(roles, emptyMsg) {
+    if (roles.length === 0) return `<div style="font-size:0.75rem;color:var(--text3);padding:0.25rem 0">${emptyMsg}</div>`;
+    return roles.map(r => {
+      const resNames = (r.assignedResources || []).map(res => res.name);
+      const pipeNames = (r.pipelineResources || []).map(res => res.name);
+      let detail = '';
+      if (resNames.length) detail += '<span style="color:var(--green)">' + resNames.join(', ') + '</span>';
+      if (pipeNames.length) detail += (detail ? ' + ' : '') + '<span style="color:var(--amber)">' + pipeNames.join(', ') + ' (pipeline)</span>';
+      return `<div style="font-size:0.75rem;padding:0.1875rem 0;border-bottom:1px solid var(--border)">
+        <div style="display:flex;justify-content:space-between;gap:0.5rem">
+          <strong>${esc(r.role)}</strong>
+          <span style="white-space:nowrap;color:var(--text3)">${esc(r.project)}</span>
+          <span style="white-space:nowrap">${r.assignedFTE.toFixed(1)} / ${r.peak.toFixed(1)} FTE</span>
+        </div>
+        ${detail ? '<div style="font-size:0.6875rem">' + detail + '</div>' : ''}
+        <div style="font-size:0.6875rem;color:var(--text2)">${r.action}</div>
+      </div>`;
+    }).join('');
+  }
+
+  function recruitKpiCard(label, roles, color, sub, title) {
+    const count = roles.length;
+    const id = 'recruit-detail-' + label.replace(/\s+/g, '-').toLowerCase();
+    return `<div class="kpi-card" style="cursor:pointer;position:relative" title="${title}" onclick="var d=document.getElementById('${id}');d.style.display=d.style.display==='none'?'block':'none'">
+      <div class="kpi-label">${label}</div>
+      <div class="kpi-value" style="color:${color}">${count}</div>
+      <div class="kpi-sub" style="font-size:0.625rem;color:var(--text3)">${sub}</div>
+      ${count > 0 ? '<div style="font-size:0.5625rem;color:var(--accent);margin-top:0.125rem">click for detail</div>' : ''}
+    </div>`;
+  }
+
+  const kpiEl = document.getElementById('recruit-kpi-cards');
+  kpiEl.innerHTML =
+    recruitKpiCard('Needs Attention', [...buckets.recruit,...buckets.urgent,...buckets.overdue], needsAction===0?'var(--green)':'var(--red)', 'of '+rd.length+' project-role'+(rd.length!==1?'s':''), 'Roles requiring recruitment action — no coverage and limited time') +
+    recruitKpiCard('Filled', buckets.filled, 'var(--green)', 'Fully covered', 'Assigned FTE meets or exceeds peak demand') +
+    recruitKpiCard('In Pipeline', buckets.pipeline, 'var(--green)', 'Candidates identified', 'Resources in pipeline (merit pool, interviewing, offered) — not yet assigned') +
+    recruitKpiCard('Partial', buckets.partial, 'var(--amber)', 'Assigned but gaps remain', 'Some FTE assigned but does not fully cover peak demand — recruit more') +
+    recruitKpiCard('On Track', buckets.ok, 'var(--green)', 'Time to recruit normally', 'No coverage yet but enough lead time for standard recruitment') +
+    recruitKpiCard('Recruit Now', buckets.recruit, 'var(--amber)', 'Merit pool window only', 'No coverage — standard window passed, merit pool / direct sourcing only') +
+    recruitKpiCard('Urgent', buckets.urgent, 'var(--red)', 'Onboard window only', 'No coverage — must identify candidate and start onboarding immediately') +
+    recruitKpiCard('Overdue', buckets.overdue, 'var(--red)', 'Timeline at risk', 'No coverage — resource needed before recruitment could complete');
+
+  // Detail panels (hidden by default, toggled by clicking KPI cards)
+  const detailPanels = [
+    {id:'needs-attention', roles:[...buckets.recruit,...buckets.urgent,...buckets.overdue], empty:'No roles need attention'},
+    {id:'filled', roles:buckets.filled, empty:'No roles fully filled yet'},
+    {id:'in-pipeline', roles:buckets.pipeline, empty:'No roles in pipeline'},
+    {id:'partial', roles:buckets.partial, empty:'No partially filled roles'},
+    {id:'on-track', roles:buckets.ok, empty:'No roles in this category'},
+    {id:'recruit-now', roles:buckets.recruit, empty:'No roles in this category'},
+    {id:'urgent', roles:buckets.urgent, empty:'No urgent roles'},
+    {id:'overdue', roles:buckets.overdue, empty:'No overdue roles'},
+  ];
+  kpiEl.innerHTML += detailPanels.map(dp =>
+    `<div id="recruit-detail-${dp.id}" style="display:none;width:100%;padding:0.5rem 0.75rem;background:var(--surface2);border:1px solid var(--border);border-radius:0.5rem;margin-top:0.25rem">
+      <div style="font-weight:700;font-size:0.75rem;color:var(--text2);margin-bottom:0.375rem;text-transform:uppercase">${dp.id.replace(/-/g,' ')}</div>
+      ${recruitRoleDetail(dp.roles, dp.empty)}
+    </div>`
+  ).join('');
 
   // Potential roles from pipeline/prospect projects
   const potentialWD=getWeeklyDemand(POTENTIAL_STATUSES);
@@ -2557,20 +2786,47 @@ function renderRecruitmentPlanner() {
   document.getElementById('recruit-sub').textContent=`Portfolio start ${fmtDate(parseDate(S.startDate))} \u00B7 Today: ${fmtDate(parseDate(S.todayDate))} \u00B7 Onboarding per project (varies by Agency)`;
   document.getElementById('r-std-recruit').textContent=S.recruitStandardWeeks;
   document.getElementById('r-merit-recruit').textContent=S.recruitMeritWeeks;
+  // Phase overlap warnings on recruitment page
+  const recruitOverlapEl = document.getElementById('recruit-overlap-warnings');
+  if (recruitOverlapEl) {
+    const ow = getPhaseOverlapWarnings();
+    const active = ow.filter(w => !w.isShared);
+    if (active.length > 0) {
+      recruitOverlapEl.style.display = '';
+      recruitOverlapEl.innerHTML = `<div style="font-weight:700;font-size:0.75rem;color:var(--amber);margin-bottom:0.25rem">&#9888; Phase overlaps affect ${active.length} phase pair${active.length > 1 ? 's' : ''} &mdash; stacked FTE may inflate recruitment demand</div>` + renderOverlapWarningsHTML(ow, true);
+    } else {
+      recruitOverlapEl.style.display = 'none';
+      recruitOverlapEl.innerHTML = '';
+    }
+  }
   document.getElementById('r-merit-status').textContent=S.meritPoolActive?'ACTIVE':'INACTIVE';
-  const committedWD=getWeeklyDemand(RECRUIT_STATUSES);
-  const data=getRecruitmentData(committedWD,RECRUIT_STATUSES).filter(Boolean), today=parseDate(S.todayDate);
-  let html=`<thead><tr><th>Role</th><th>Projects</th><th style="text-align:center">Peak</th><th style="text-align:center">Covered</th><th>Onboard</th><th>First Needed</th><th>Recruit By (Std)</th><th>Recruit By (Merit)</th><th>Onboard By</th><th>Weeks</th><th>Status</th><th>Action</th></tr></thead><tbody>`;
-  data.forEach(r=>{
-    const stdOK=r.stdRecruitBy>today, meritOK=r.meritRecruitBy>today;
-    const obC=r.onboardWeeks>=6?'long':r.onboardWeeks>=4?'medium':'short';
-    const isCovered=r.filled||(r.coveredFTE>=r.peak);
-    const coverColor=isCovered?'var(--green)':r.coveredFTE>0?'var(--amber)':'var(--text3)';
-    const coverLabel=r.coveredFTE>0?(r.assignedFTE>0&&r.pipelineCount>0?r.assignedFTE.toFixed(1)+'+'+r.pipelineCount:r.assignedFTE>0?r.assignedFTE.toFixed(1):r.pipelineCount+'p'):'\u2014';
-    html+=`<tr${r.filled?' style="opacity:0.7"':''}><td class="role-cell">${r.role}</td><td style="font-size:0.8125rem;color:var(--text2)">${r.projects.map(p=>shortName(p,30)).join(', ')}</td><td class="num-cell text-accent" style="font-weight:700">${r.peak.toFixed(1)}</td><td class="num-cell" style="font-weight:700;color:${coverColor}" title="${r.assignedFTE.toFixed(1)} assigned, ${r.pipelineCount} in pipeline">${coverLabel}</td><td class="num-cell"><span class="onboard-badge ${obC}">${r.onboardWeeks}w</span></td><td class="date-cell"><strong>${weekLabel(r.firstWeek)}</strong> ${fmtDateShort(r.firstDate)}</td><td class="date-cell ${!isCovered&&!stdOK?'overdue':''}">${isCovered?'\u2014':fmtDate(r.stdRecruitBy)}</td><td class="date-cell ${!isCovered&&!meritOK&&stdOK?'warning':!isCovered&&!meritOK?'overdue':''}">${isCovered?'\u2014':fmtDate(r.meritRecruitBy)}</td><td class="date-cell">${isCovered?'\u2014':fmtDate(r.onboardBy)}</td><td class="num-cell ${isCovered?'text-green':r.weeksUntil<r.meritTotal?'text-red':r.weeksUntil<r.stdTotal?'text-amber':'text-green'}" style="font-weight:700">${isCovered?'\u2713':r.weeksUntil+'w'}</td><td><span class="status-pill ${r.statusClass}">${r.status}</span></td><td style="font-size:0.8125rem;color:var(--text2);max-width:12.5rem">${r.action}</td></tr>`;
+  const today=parseDate(S.todayDate);
+  const byProjData = getRecruitmentDataByProject(RECRUIT_STATUSES);
+  // Group by project
+  const byProject = {};
+  byProjData.forEach(r => { if (!byProject[r.project]) byProject[r.project] = []; byProject[r.project].push(r); });
+  let html = `<thead><tr><th>Role</th><th style="text-align:center">Peak</th><th style="text-align:center">Covered</th><th>Onboard</th><th>First Needed</th><th>Recruit By (Std)</th><th>Recruit By (Merit)</th><th>Weeks</th><th>Status</th><th>Action</th></tr></thead><tbody>`;
+  Object.entries(byProject).forEach(([pn, roles]) => {
+    const pcs = appData.projects[pn].contractStatus || 'contracted';
+    const pcsInfo = CONTRACT_STATUSES[pcs];
+    const filledCount = roles.filter(r => r.filled).length;
+    const urgentCount = roles.filter(r => r.statusClass === 'status-danger' || r.statusClass === 'status-critical').length;
+    let projSummary = `${filledCount}/${roles.length} filled`;
+    if (urgentCount > 0) projSummary += ` \u00B7 <span style="color:var(--red);font-weight:700">${urgentCount} urgent</span>`;
+    html += `<tr><td colspan="10" style="background:var(--surface2);font-weight:700;font-size:0.875rem;padding:0.5rem 0.75rem;border-top:2px solid var(--border2)">
+      <span class="contract-pill contract-${pcs}" style="font-size:0.5625rem;padding:0.0625rem 0.375rem;margin-right:0.375rem">${pcsInfo.label}</span>
+      ${pn} <span style="font-weight:400;font-size:0.75rem;color:var(--text3);margin-left:0.5rem">${projSummary}</span></td></tr>`;
+    roles.forEach(r => {
+      const isCovered = r.filled || (r.coveredFTE >= r.peak);
+      const stdOK = r.stdRecruitBy > today, meritOK = r.meritRecruitBy > today;
+      const coverColor = isCovered ? 'var(--green)' : r.coveredFTE > 0 ? 'var(--amber)' : 'var(--text3)';
+      const coverLabel = r.coveredFTE > 0 ? (r.assignedFTE > 0 && r.pipelineCount > 0 ? r.assignedFTE.toFixed(1) + '+' + r.pipelineCount : r.assignedFTE > 0 ? r.assignedFTE.toFixed(1) : r.pipelineCount + 'p') : '\u2014';
+      const obC = r.onboardWeeks >= 6 ? 'long' : r.onboardWeeks >= 4 ? 'medium' : 'short';
+      html += `<tr${r.filled ? ' style="opacity:0.6"' : ''}><td class="role-cell">${r.role}</td><td class="num-cell text-accent" style="font-weight:700">${r.peak.toFixed(1)}</td><td class="num-cell" style="font-weight:700;color:${coverColor}" title="${r.assignedFTE.toFixed(1)} assigned, ${r.pipelineCount} in pipeline">${coverLabel}</td><td class="num-cell"><span class="onboard-badge ${obC}">${r.onboardWeeks}w</span></td><td class="date-cell"><strong>${weekLabel(r.firstWeek)}</strong> ${fmtDateShort(r.firstDate)}</td><td class="date-cell ${!isCovered && !stdOK ? 'overdue' : ''}">${isCovered ? '\u2014' : fmtDate(r.stdRecruitBy)}</td><td class="date-cell ${!isCovered && !meritOK && stdOK ? 'warning' : !isCovered && !meritOK ? 'overdue' : ''}">${isCovered ? '\u2014' : fmtDate(r.meritRecruitBy)}</td><td class="num-cell ${isCovered ? 'text-green' : r.weeksUntil < r.meritTotal ? 'text-red' : r.weeksUntil < r.stdTotal ? 'text-amber' : 'text-green'}" style="font-weight:700">${isCovered ? '\u2713' : r.weeksUntil + 'w'}</td><td><span class="status-pill ${r.statusClass}">${r.status}</span></td><td style="font-size:0.8125rem;color:var(--text2);max-width:14rem">${r.action}</td></tr>`;
+    });
   });
-  html+='</tbody>';
-  document.getElementById('recruit-table').innerHTML=html;
+  html += '</tbody>';
+  document.getElementById('recruit-table').innerHTML = html;
 
   // Potential roles from pipeline/prospect projects
   const potentialWD=getWeeklyDemand(POTENTIAL_STATUSES);
@@ -2634,7 +2890,7 @@ function renderResources() {
   let overAllocCount=0;
   res.forEach(r=>{
     if(counts[r.status]!==undefined)counts[r.status]++;
-    const aFTE=Object.values(r.assignments||{}).filter(v=>v>0).reduce((s,v)=>s+v,0);
+    const aFTE=getPeakAssignedFTE(r).peak;
     if(aFTE>(r.maxFTE||1.0))overAllocCount++;
   });
   const kpiEl=document.getElementById('res-kpi-cards');
@@ -2655,12 +2911,13 @@ function renderResources() {
     res.forEach(r=>{
       if(!byRole[r.role])byRole[r.role]={total:0,assigned:0,available:0,totalFTE:0,totalMaxFTE:0};
       byRole[r.role].total++;
-      const aFTE=Object.values(r.assignments||{}).filter(v=>v>0).reduce((s,v)=>s+v,0);
+      const peakInfo=getPeakAssignedFTE(r);
+      const aFTE=peakInfo.peak;
       const mFTE=r.maxFTE||1.0;
       byRole[r.role].totalFTE+=aFTE;
       byRole[r.role].totalMaxFTE+=mFTE;
       if(r.status==='assigned')byRole[r.role].assigned++;else byRole[r.role].available++;
-      if(aFTE>mFTE)overAllocatedList.push({name:r.name,role:r.role,assigned:aFTE,max:mFTE});
+      if(aFTE>mFTE)overAllocatedList.push({name:r.name,role:r.role,assigned:aFTE,max:mFTE,peakWeek:peakInfo.peakWeek});
     });
     let html=Object.keys(byRole).length===0?'<div style="color:var(--text3);font-size:0.8125rem">No resources added yet.</div>':
       Object.entries(byRole).map(([role,d])=>{
@@ -2671,7 +2928,8 @@ function renderResources() {
       html+='<div style="margin-top:0.5rem;padding:0.5rem;background:rgba(220,38,38,0.06);border:1px solid rgba(220,38,38,0.2);border-radius:0.375rem">';
       html+='<div style="font-weight:700;color:var(--red);font-size:0.75rem;margin-bottom:0.25rem">&#9888; Over-allocated Resources ('+overAllocatedList.length+')</div>';
       overAllocatedList.forEach(o=>{
-        html+=`<div style="font-size:0.75rem;color:var(--text2);padding:0.125rem 0"><strong>${esc(o.name)}</strong> (${esc(o.role)}) &mdash; assigned ${o.assigned.toFixed(2)} FTE, max ${o.max.toFixed(1)} FTE <span style="color:var(--red);font-weight:700">(+${(o.assigned-o.max).toFixed(2)} over)</span></div>`;
+        const peakLabel=o.peakWeek>=0?' peak at '+fmtDateShort(weekDate(o.peakWeek)):'';
+        html+=`<div style="font-size:0.75rem;color:var(--text2);padding:0.125rem 0"><strong>${esc(o.name)}</strong> (${esc(o.role)}) &mdash; peak ${o.assigned.toFixed(2)} FTE, max ${o.max.toFixed(1)} FTE <span style="color:var(--red);font-weight:700">(+${(o.assigned-o.max).toFixed(2)} over${peakLabel})</span></div>`;
       });
       html+='</div>';
     }
@@ -2692,10 +2950,12 @@ function renderResources() {
   listEl.innerHTML=filtered.map((r,idx)=>{
     const origIdx=res.indexOf(r);
     const statusLabel={'assigned':'Assigned','merit-pool':'Merit Pool','interviewing':'Interviewing','offered':'Offered','available':'Available'};
-    const assignList=Object.entries(r.assignments||{}).filter(([k,v])=>v>0);
-    const totalAssignedFTE=assignList.reduce((s,[,v])=>s+v,0);
+    const assignList=getAssignmentList(r);
+    const totalAssignedFTE=assignList.reduce((s,a)=>s+a.fte,0);
+    const peakInfo=getPeakAssignedFTE(r);
+    const peakFTE=peakInfo.peak;
     const maxFTE=r.maxFTE||1.0;
-    const isOverAllocated=totalAssignedFTE>maxFTE;
+    const isOverAllocated=peakFTE>maxFTE;
     const burden=calcBurdenRate(r);
     const resType=r.resourceType||'permanent';
     const typeLabel=RESOURCE_TYPES[resType]?.label||resType;
@@ -2723,7 +2983,7 @@ function renderResources() {
             ${AU_STATE_CODES.map(c=>`<option value="${c}" ${r.state===c?'selected':''}>${AU_STATES[c]}</option>`).join('')}
           </select>
           <span style="font-size:0.6875rem;color:var(--text3);white-space:nowrap" title="Maximum FTE capacity for this resource">Max:<input class="form-input" type="number" value="${maxFTE}" min="0.1" max="2" step="0.1" style="width:3.5rem;font-size:0.6875rem;padding:0.125rem 0.25rem;margin-left:0.125rem" onchange="updateResourceField(${origIdx},'maxFTE',+this.value);renderResources()"></span>
-          ${isOverAllocated?`<span style="background:var(--red);color:#fff;padding:0.125rem 0.5rem;border-radius:0.5rem;font-size:0.625rem;font-weight:700;white-space:nowrap" title="Assigned ${totalAssignedFTE.toFixed(2)} FTE across projects, exceeds max ${maxFTE} FTE">OVER ${totalAssignedFTE.toFixed(2)}/${maxFTE} FTE</span>`:''}
+          ${isOverAllocated?`<span style="background:var(--red);color:#fff;padding:0.125rem 0.5rem;border-radius:0.5rem;font-size:0.625rem;font-weight:700;white-space:nowrap" title="Peak concurrent ${peakFTE.toFixed(2)} FTE (week of ${peakInfo.peakWeek>=0?fmtDateShort(weekDate(peakInfo.peakWeek)):'N/A'}), exceeds max ${maxFTE} FTE">OVER ${peakFTE.toFixed(2)}/${maxFTE} FTE</span>`:''}
           <button class="btn btn-sm" style="color:var(--red);border-color:var(--red-bg)" onclick="deleteResource(${origIdx})">&times;</button>
         </div>
       </div>
@@ -2738,14 +2998,18 @@ function renderResources() {
         ${burden.totalBurdenPct>0?`<span style="position:relative;cursor:pointer" onclick="this.querySelector('.burden-tip').classList.toggle('show')">Uplift: <strong>${burden.totalBurdenPct.toFixed(2)}%</strong> <span style="color:var(--accent)">&#9432;</span><span class="burden-tip">${Object.entries(burden.breakdown).map(([k,v])=>'<div style=\\"display:flex;justify-content:space-between;gap:1rem\\"><span>'+k+'</span><strong>'+v.toFixed(2)+'%</strong></div>').join('')}<div style="border-top:1px solid var(--border);margin-top:0.25rem;padding-top:0.25rem;display:flex;justify-content:space-between"><span style=\\"font-weight:700\\">Total</span><strong style=\\"color:var(--accent)\\">${burden.totalBurdenPct.toFixed(2)}%</strong></div></span></span>`:''}
         ${r.notes?`<span>${r.notes}</span>`:''}
       </div>
-      ${assignList.length>0?`<div style="margin-bottom:0.375rem">${assignList.map(([proj,fte])=>`<span class="assignment-row"><span class="assignment-proj">${shortName(proj,30)}</span> ${fte} FTE</span>`).join('')}<span style="font-size:0.6875rem;color:${isOverAllocated?'var(--red)':'var(--text3)'};font-weight:${isOverAllocated?'700':'400'};margin-left:0.25rem">(${totalAssignedFTE.toFixed(2)} / ${maxFTE} FTE)</span></div>`:''}
+      ${assignList.length>0?`<div style="margin-bottom:0.375rem">${assignList.map(a=>{const proj=appData.projects[a.project];const hasRoleFTE=proj&&proj.fte[a.role]&&proj.fte[a.role].some(v=>v>0);const noAlloc=proj&&!hasRoleFTE;return `<span class="assignment-row${noAlloc?' no-role-alloc':''}"${noAlloc?' style="border:1px dashed var(--amber);background:rgba(245,158,11,0.06)"':''} title="${noAlloc?a.role+' has no planned FTE in '+a.project+' — no effort allocation or cost recovery':''}"><span class="assignment-proj">${shortName(a.project,24)}</span> <span style="color:${noAlloc?'var(--amber)':'var(--accent)'};font-size:0.6875rem">${a.role} ${a.fte} FTE${noAlloc?' <span style="font-weight:700" title="This role has no FTE allocated in any phase of this project — cost will not be recovered">&#9888; no planned effort</span>':''}</span><button style="background:none;border:none;color:var(--red);cursor:pointer;font-size:0.625rem;padding:0 0.25rem;opacity:0.6" onclick="removeAssignment(${origIdx},'${esc(a.project)}','${esc(a.role)}')" title="Remove this assignment">&times;</button></span>`;}).join('')}<span style="font-size:0.6875rem;color:${isOverAllocated?'var(--red)':'var(--text3)'};font-weight:${isOverAllocated?'700':'400'};margin-left:0.25rem">(${peakFTE!==totalAssignedFTE?'peak '+peakFTE.toFixed(2)+' / ':totalAssignedFTE.toFixed(2)+' / '}${maxFTE} FTE${peakFTE!==totalAssignedFTE?' &mdash; '+totalAssignedFTE.toFixed(2)+' total, sequential':''})</span></div>`:''}
+      ${(()=>{const ow=getResourceOverlapWarnings(r);if(ow.length===0)return '';const active=ow.filter(w=>!w.isShared&&w.isOverCommitted);const shared=ow.filter(w=>w.isShared);const safe=ow.filter(w=>!w.isShared&&!w.isOverCommitted);if(active.length===0&&safe.length===0&&shared.length===0)return '';let h='<div style="margin-bottom:0.375rem;padding:0.375rem 0.5rem;border-radius:0.375rem;font-size:0.6875rem;';if(active.length>0)h+='background:rgba(220,38,38,0.06);border:1px solid rgba(220,38,38,0.2)';else h+='background:rgba(245,158,11,0.06);border:1px solid rgba(245,158,11,0.2)';h+='">';if(active.length>0){h+='<div style="font-weight:700;color:var(--red);margin-bottom:0.125rem">&#9888; Multi-role overlap — over-committed during overlap periods</div>';active.forEach(w=>{const phLabel=w.samePhase?'both in '+w.phaseA:w.phaseA+' \u2194 '+w.phaseB;h+='<div style="padding:0.0625rem 0;color:var(--text2)"><strong>'+esc(w.project)+'</strong>: '+esc(w.roleA)+' + '+esc(w.roleB)+' ('+phLabel+') = <span style="color:var(--red);font-weight:700">'+w.combinedFTE.toFixed(2)+' FTE</span> for '+w.overlapWeeks+'w (max '+w.maxFTE.toFixed(1)+')</div>';});}if(safe.length>0){h+='<div style="font-weight:600;color:var(--amber);margin-bottom:0.125rem'+(active.length>0?';margin-top:0.25rem':'')+'">'+(active.length>0?'':'&#9888; ')+'Multi-role phase overlaps (within capacity)</div>';safe.forEach(w=>{const phLabel=w.samePhase?'both in '+w.phaseA:w.phaseA+' \u2194 '+w.phaseB;h+='<div style="padding:0.0625rem 0;color:var(--text3)">'+esc(w.project)+': '+esc(w.roleA)+' + '+esc(w.roleB)+' ('+phLabel+') = '+w.combinedFTE.toFixed(2)+' FTE for '+w.overlapWeeks+'w</div>';});}if(shared.length>0)h+='<div style="color:var(--text3);font-style:italic;margin-top:0.125rem">'+shared.length+' overlap'+(shared.length>1?'s':'')+' suppressed (shared phases)</div>';h+='</div>';return h;})()}
       <div style="display:flex;gap:0.375rem;flex-wrap:wrap;margin-bottom:0.375rem">
         <select class="form-input" style="max-width:12rem;font-size:0.75rem;padding:0.1875rem" id="assign-proj-${origIdx}">
           ${Object.keys(appData.projects).map(p=>{const pcs=CONTRACT_STATUSES[appData.projects[p].contractStatus||'contracted'];return `<option value="${p}" ${!pcs.canAssign?'disabled':''}>${shortName(p,30)}${!pcs.canAssign?' ['+pcs.label+']':''}</option>`;}).join('')}
         </select>
+        <select class="form-input" style="max-width:10rem;font-size:0.75rem;padding:0.1875rem" id="assign-role-${origIdx}">
+          ${appData.roles.map(rl=>`<option value="${rl}" ${r.role===rl?'selected':''}>${rl}</option>`).join('')}
+        </select>
         <input class="form-input" type="number" style="width:4rem;font-size:0.75rem;padding:0.1875rem" value="1" min="0.25" max="2" step="0.25" id="assign-fte-${origIdx}">
         <button class="btn btn-sm" onclick="assignResource(${origIdx})">Assign</button>
-        ${assignList.length>0?`<button class="btn btn-sm" style="color:var(--amber)" onclick="clearAssignments(${origIdx})">Clear</button>`:''}
+        ${assignList.length>0?`<button class="btn btn-sm" style="color:var(--amber)" onclick="clearAssignments(${origIdx})">Clear All</button>`:''}
       </div>
       <div class="comment-thread">
         ${(r.comments||[]).map(c=>`<div class="comment-item"><div class="comment-meta">${c.date}</div><div>${c.text}</div></div>`).join('')}
@@ -2809,6 +3073,86 @@ function addResource(){
 function deleteResource(idx){if(!confirm('Delete this resource?'))return;appData.resources.splice(idx,1);schedSave();toast('Resource removed','info');}
 function updateResourceField(idx,field,value){appData.resources[idx][field]=value;schedSave();}
 
+// ---- Multi-role assignment helpers ----
+// Get all assignment entries for a resource: [{project, role, fte}]
+function getAssignmentList(r) {
+  const list = [];
+  Object.entries(r.assignments || {}).forEach(([pn, val]) => {
+    if (Array.isArray(val)) val.forEach(a => { if (a.fte > 0) list.push({ project: pn, role: a.role, fte: a.fte }); });
+    else if (typeof val === 'number' && val > 0) list.push({ project: pn, role: r.role, fte: val });
+  });
+  return list;
+}
+// Get simple sum of all assigned FTE (not time-aware)
+function getTotalAssignedFTE(r) {
+  return getAssignmentList(r).reduce((s, a) => s + a.fte, 0);
+}
+// Get peak concurrent FTE for a resource across all weeks (time-aware)
+// Accounts for sequential phases and shared-phase FTE logic
+function getPeakAssignedFTE(r) {
+  const assignments = getAssignmentList(r);
+  if (assignments.length === 0) return { peak: 0, peakWeek: -1 };
+  if (assignments.length === 1) return { peak: assignments[0].fte, peakWeek: -1 };
+  const TW = appData.settings.totalWeeks;
+  let peak = 0, peakWeek = -1;
+  for (let w = 0; w < TW; w++) {
+    let weekFTE = 0;
+    // Group assignments by project to handle shared-phase logic per project
+    const byProj = {};
+    assignments.forEach(a => {
+      if (!byProj[a.project]) byProj[a.project] = [];
+      byProj[a.project].push(a);
+    });
+    Object.entries(byProj).forEach(([pn, projAssigns]) => {
+      const proj = appData.projects[pn];
+      if (!proj) { projAssigns.forEach(a => { weekFTE += a.fte; }); return; }
+      const resolved = resolvePhases(proj);
+      const phases = getProjectPhases(proj);
+      const shared = proj.sharedPhases || [];
+      // For each role assignment, determine if active this week
+      // Track shared vs non-shared activation separately per role
+      const roleActivity = {}; // role -> { sharedFTE, nonSharedFTE }
+      projAssigns.forEach(a => {
+        if (!roleActivity[a.role]) roleActivity[a.role] = { fte: a.fte, shared: false, nonShared: false };
+        phases.forEach((phase, pi) => {
+          const ph = resolved[phase];
+          if (w < ph.start || w >= ph.end) return;
+          const roleFTE = (proj.fte[a.role] && proj.fte[a.role][pi]) || 0;
+          if (roleFTE > 0) {
+            if (shared.includes(phase)) roleActivity[a.role].shared = true;
+            else roleActivity[a.role].nonShared = true;
+          }
+        });
+      });
+      // Count FTE: if a role is ONLY active in shared phases and another role
+      // is also ONLY active in shared phases, use max (sequential/shared work)
+      const sharedOnly = [], hasNonShared = [];
+      Object.values(roleActivity).forEach(ra => {
+        if (ra.shared && !ra.nonShared) sharedOnly.push(ra.fte);
+        else if (ra.nonShared) hasNonShared.push(ra.fte);
+      });
+      // Non-shared phase roles always stack (concurrent)
+      hasNonShared.forEach(f => { weekFTE += f; });
+      // Shared-only roles: these overlap due to shared phases, use max (not concurrent)
+      if (sharedOnly.length > 0) weekFTE += Math.max(...sharedOnly);
+    });
+    if (weekFTE > peak) { peak = weekFTE; peakWeek = w; }
+  }
+  return { peak, peakWeek };
+}
+// Get FTE assigned by a resource to a specific project (all roles)
+function getProjectFTE(r, projName) {
+  return getAssignmentList(r).filter(a => a.project === projName).reduce((s, a) => s + a.fte, 0);
+}
+// Get FTE assigned by a resource to a specific project+role
+function getProjectRoleFTE(r, projName, role) {
+  return getAssignmentList(r).filter(a => a.project === projName && a.role === role).reduce((s, a) => s + a.fte, 0);
+}
+// Get all unique roles a resource is assigned to
+function getAssignedRoles(r) {
+  return [...new Set(getAssignmentList(r).map(a => a.role))];
+}
+
 function setFromHourlyRate(idx, hourlyRate) {
   const r = appData.resources[idx];
   const type = r.resourceType || 'permanent';
@@ -2848,10 +3192,29 @@ function assignResource(idx){
     return;
   }
   const fte=+(document.getElementById('assign-fte-'+idx).value)||1;
+  const assignRole=document.getElementById('assign-role-'+idx)?.value||appData.resources[idx].role;
   if(!appData.resources[idx].assignments)appData.resources[idx].assignments={};
-  appData.resources[idx].assignments[proj]=fte;
-  if(appData.resources[idx].status!=='assigned')appData.resources[idx].status='assigned';
-  schedSave();toast('Assigned to '+proj,'info');
+  const r=appData.resources[idx];
+  if(!Array.isArray(r.assignments[proj]))r.assignments[proj]=[];
+  // Update existing role assignment or add new
+  const existing=r.assignments[proj].find(a=>a.role===assignRole);
+  if(existing)existing.fte=fte;
+  else r.assignments[proj].push({role:assignRole,fte});
+  // Remove zero entries
+  r.assignments[proj]=r.assignments[proj].filter(a=>a.fte>0);
+  if(r.assignments[proj].length===0)delete r.assignments[proj];
+  if(r.status!=='assigned')r.status='assigned';
+  schedSave();toast('Assigned as '+assignRole+' to '+proj,'info');
+}
+function removeAssignment(idx,proj,role){
+  const r=appData.resources[idx];
+  if(!r.assignments||!r.assignments[proj])return;
+  if(Array.isArray(r.assignments[proj])){
+    r.assignments[proj]=r.assignments[proj].filter(a=>a.role!==role);
+    if(r.assignments[proj].length===0)delete r.assignments[proj];
+  } else { delete r.assignments[proj]; }
+  if(Object.keys(r.assignments).length===0)r.status='available';
+  schedSave();renderResources();toast('Assignment removed','info');
 }
 function clearAssignments(idx){appData.resources[idx].assignments={};appData.resources[idx].status='available';schedSave();toast('Assignments cleared','info');}
 function addComment(idx){
@@ -2981,17 +3344,32 @@ function calcProjectFinancials(projName){
   appData.roles.forEach(role=>{
     const pPhases=getProjectPhases(p);
     const fteArr=p.fte[role]||new Array(pPhases.length).fill(0);
-    let totalFTEWeeks=0;
-    pPhases.forEach((phase,pi)=>{
-      const phWeeks=(p.phases[phase]&&p.phases[phase].weeks)||0;
-      totalFTEWeeks+=fteArr[pi]*phWeeks;
-    });
+    // Compute FTE-weeks and peak using shared-phase-aware per-week demand
+    const shared = p.sharedPhases || [];
+    const projStartW = Math.min(...pPhases.map(ph => resolved[ph] ? resolved[ph].start : Infinity));
+    const projEndW = Math.max(...pPhases.map(ph => resolved[ph] ? resolved[ph].end : 0));
+    let totalFTEWeeks = 0;
+    let peakDemandFTE = 0;
+    for (let w = projStartW; w < projEndW; w++) {
+      let sharedMax = 0, nonSharedTotal = 0;
+      pPhases.forEach((phase, pi) => {
+        const phConf = resolved[phase];
+        if (!phConf || w < phConf.start || w >= phConf.end) return;
+        const val = fteArr[pi] || 0;
+        if (val > 0) {
+          if (shared.includes(phase)) sharedMax = Math.max(sharedMax, val);
+          else nonSharedTotal += val;
+        }
+      });
+      const weekFTE = sharedMax + nonSharedTotal;
+      totalFTEWeeks += weekFTE;
+      peakDemandFTE = Math.max(peakDemandFTE, weekFTE);
+    }
     if(totalFTEWeeks<=0)return;
 
     // Find assigned resources for this role and their cost
-    const assignedRes=(appData.resources||[]).filter(r=>r.role===role&&r.assignments&&r.assignments[projName]>0);
-    const totalAssignedFTE = assignedRes.reduce((s,r)=>s+(r.assignments[projName]||0),0);
-    const peakDemandFTE = Math.max(...fteArr);
+    const assignedRes=(appData.resources||[]).filter(r=>r.status==='assigned'&&getProjectRoleFTE(r,projName,role)>0);
+    const totalAssignedFTE = assignedRes.reduce((s,r)=>s+getProjectRoleFTE(r,projName,role),0);
 
     // Calculate blended hourly rate and hours-per-day for assigned resources
     let blendedHourlyRate = 0;
@@ -3001,7 +3379,7 @@ function calcProjectFinancials(projName){
       let weightedHpd = 0;
       assignedRes.forEach(r=>{
         const burden=calcBurdenRate(r);
-        const fte = r.assignments[projName]||0;
+        const fte = getProjectRoleFTE(r, projName, role);
         weightedRate += burden.hourlyRate * fte;
         weightedHpd += (burden.annualHours / 260) * fte;
       });
@@ -3016,25 +3394,35 @@ function calcProjectFinancials(projName){
       blendedHrsPerDay = estBurden.annualHours / 260;
     }
 
-    // Iterate week-by-week through project phases
-    // Use max(demand, assigned) — if over-allocated, project bears the actual cost
+    // Iterate week-by-week, resolving demand per week accounting for shared phases
+    // Shared phases use max(FTE) during overlaps instead of sum
     let roleTotalCost = 0;
     let overAllocWeeks = 0;
-    pPhases.forEach((phase, pi) => {
-      const phConf = resolved[phase];
-      if (!phConf) return;
-      const phaseFTE = fteArr[pi] || 0;
-      if (phaseFTE <= 0 && totalAssignedFTE <= 0) return;
-      const effectiveFTE = phaseFTE > 0 ? Math.max(phaseFTE, totalAssignedFTE) : 0;
-      if (totalAssignedFTE > phaseFTE && phaseFTE > 0) overAllocWeeks += phConf.weeks;
-      for (let w = phConf.start; w < phConf.end; w++) {
-        const holidaysThisWeek = getHolidaysInWeek(w, projStates).length;
-        const workingDays = Math.max(0, 5 - holidaysThisWeek);
-        if (holidaysThisWeek > 0) totalHolidayDays += holidaysThisWeek * effectiveFTE;
-        const weekHrs = blendedHrsPerDay * workingDays;
-        roleTotalCost += blendedHourlyRate * weekHrs * effectiveFTE;
-      }
-    });
+    // Build per-week demand for this role (mirrors getFTE logic)
+    const projStart = resolved[pPhases[0]] ? resolved[pPhases[0]].start : 0;
+    const projEnd = Math.max(...pPhases.map(ph => resolved[ph] ? resolved[ph].end : 0));
+    const weeklyDemand = {};
+    for (let w = projStart; w < projEnd; w++) {
+      let sharedMax = 0, nonSharedTotal = 0;
+      pPhases.forEach((phase, pi) => {
+        const phConf = resolved[phase];
+        if (!phConf || w < phConf.start || w >= phConf.end) return;
+        const val = fteArr[pi] || 0;
+        if (val > 0) {
+          if (shared.includes(phase)) sharedMax = Math.max(sharedMax, val);
+          else nonSharedTotal += val;
+        }
+      });
+      const demandFTE = sharedMax + nonSharedTotal;
+      if (demandFTE <= 0 && totalAssignedFTE <= 0) continue;
+      const effectiveFTE = demandFTE > 0 ? Math.max(demandFTE, totalAssignedFTE) : 0;
+      if (totalAssignedFTE > demandFTE && demandFTE > 0) overAllocWeeks++;
+      const holidaysThisWeek = getHolidaysInWeek(w, projStates).length;
+      const workingDays = Math.max(0, 5 - holidaysThisWeek);
+      if (holidaysThisWeek > 0) totalHolidayDays += holidaysThisWeek * effectiveFTE;
+      const weekHrs = blendedHrsPerDay * workingDays;
+      roleTotalCost += blendedHourlyRate * weekHrs * effectiveFTE;
+    }
 
     const isOverhead = overheadRoles.includes(role);
     totalLabourCost+=roleTotalCost;
@@ -3613,6 +4001,9 @@ function renderProjectEditor() {
             onchange="updatePhaseOffset('${esc(activeProject)}','${phase}',this.value)" title="Weeks from project start. Leave blank for sequential.">
         </div>
         <span style="font-size:0.625rem;color:var(--text3);margin-bottom:0.25rem">wk offset</span>
+        <label style="display:flex;align-items:center;gap:0.25rem;font-size:0.625rem;color:var(--text3);margin-bottom:0.25rem;cursor:pointer" title="Shared phase FTE: the same resources work across this phase and any overlapping phases. During overlap periods, FTE is counted as the maximum (not summed), and overlap stacking warnings are suppressed.">
+          <input type="checkbox" ${(p.sharedPhases||[]).includes(phase)?'checked':''} onchange="toggleSharedPhase('${esc(activeProject)}','${esc(phase)}',this.checked)"> Shared phase FTE
+        </label>
       </div>
       <div style="font-size:0.75rem;color:var(--text2)">${fmtDateShort(startD)} &rarr; ${fmtDateShort(endD)}</div>
       ${holidayCount>0?`<div style="margin-top:0.25rem"><span class="holiday-indicator">&#9733; ${holidayCount} holiday wk${holidayCount>1?'s':''}</span></div>`:''}
@@ -3624,8 +4015,20 @@ function renderProjectEditor() {
   // Compute actual span (accounts for overlaps)
   const lastEnd=Math.max(...pPhases.map(ph=>resolved[ph]?resolved[ph].end:0));
   const actualSpan=lastEnd-firstOff;
+  // Phase overlap warnings for this project
+  const projOverlaps = getPhaseOverlapWarnings(activeProject);
+  const activeProjectOverlaps = projOverlaps.filter(w => !w.isShared);
+  let overlapHTML = '';
+  if (projOverlaps.length > 0) {
+    overlapHTML = `<div style="margin-top:0.5rem;padding:0.5rem 0.75rem;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.25);border-radius:0.375rem">
+      <div style="font-weight:700;font-size:0.6875rem;color:var(--amber);text-transform:uppercase;margin-bottom:0.25rem">&#9888; ${activeProjectOverlaps.length} Active Phase Overlap${activeProjectOverlaps.length !== 1 ? 's' : ''}</div>
+      ${renderOverlapWarningsHTML(projOverlaps, true)}
+      <div style="font-size:0.625rem;color:var(--text3);margin-top:0.25rem">Tick <strong>Shared</strong> on a phase to suppress overlap warnings where the same resources work across both phases.</div>
+    </div>`;
+  }
   html+=`</div>
     <div style="font-size:0.75rem;color:var(--text3);margin-top:0.5rem">Total phase weeks: <strong>${totalDur}</strong> &middot; Effective span: <strong>${actualSpan} weeks</strong>${totalDur!==actualSpan?' (phases overlap)':''} &middot; End: ${fmtDate(addWeeks(parseDate(psd),actualSpan))}</div>
+    ${overlapHTML}
   </div>`;
 
   // Standdowns / Freezes editor
@@ -3681,8 +4084,10 @@ function renderProjectEditor() {
     </div>`;
   }
   if (!p.overheadRoles) p.overheadRoles = [];
+  if (!p.sharedPhases) p.sharedPhases = [];
   html+=`<div><div style="font-size:0.875rem;font-weight:700;color:var(--accent);margin-bottom:0.625rem;text-transform:uppercase;letter-spacing:0.5px">FTE Allocation per Phase</div>
-    <div class="fte-editor"><table class="fte-table"><thead><tr><th class="role-th">Role</th><th title="Overhead roles are tracked separately from direct project cost recovery" style="width:3rem;font-size:0.625rem">OH</th>${ftePhases.map(ph=>{const ps=phaseStyle(p,ph);return`<th style="color:${ps.color}">${ph}</th>`;}).join('')}</tr></thead><tbody>`;
+    <div class="fte-editor"><table class="fte-table"><thead><tr><th class="role-th">Role</th><th title="Overhead roles are tracked separately from direct project cost recovery" style="width:3rem;font-size:0.625rem">OH</th>${ftePhases.map(ph=>{const ps=phaseStyle(p,ph);const isShared=p.sharedPhases.includes(ph);return`<th style="color:${ps.color}">${ph}</th>`;}).join('')}</tr></thead>
+    <tr style="font-size:0.5625rem;color:var(--text3)"><td title="Shared: same resources work across overlapping phases (no additional headcount needed for overlap)">Shared</td><td></td>${ftePhases.map(ph=>{const isShared=p.sharedPhases.includes(ph);return`<td style="text-align:center"><input type="checkbox" ${isShared?'checked':''} title="Shared phase — roles in this phase use the same resources as overlapping phases (overlap warning suppressed)" onchange="toggleSharedPhase('${esc(activeProject)}','${esc(ph)}',this.checked)"></td>`;}).join('')}</tr><tbody>`;
   appData.roles.forEach(role=>{
     const fte=p.fte[role]||new Array(ftePhases.length).fill(0);
     const isOH=p.overheadRoles.includes(role);
@@ -3695,7 +4100,7 @@ function renderProjectEditor() {
     });
     html+='</tr>';
   });
-  html+='</tbody></table></div><div style="font-size:0.6875rem;color:var(--text3);margin-top:0.25rem"><strong>OH</strong> = Overhead — role is included in project cost tracking but separated from direct cost recovery in financials (e.g. PM, Scrum Master).</div></div>';
+  html+='</tbody></table></div><div style="font-size:0.6875rem;color:var(--text3);margin-top:0.25rem"><strong>OH</strong> = Overhead — role is included in project cost tracking but separated from direct cost recovery in financials (e.g. PM, Scrum Master).<br><strong>Shared</strong> = Same resources work across this phase and any overlapping phases — overlap FTE stacking warnings are suppressed.</div></div>';
   document.getElementById('proj-editor-content').innerHTML=html;
 }
 
@@ -3907,6 +4312,13 @@ function toggleOverheadRole(pn,role,checked){
   else if(!checked)p.overheadRoles=p.overheadRoles.filter(r=>r!==role);
   schedSave();
 }
+function toggleSharedPhase(pn,phase,checked){
+  const p=appData.projects[pn];
+  if(!p.sharedPhases)p.sharedPhases=[];
+  if(checked&&!p.sharedPhases.includes(phase))p.sharedPhases.push(phase);
+  else if(!checked)p.sharedPhases=p.sharedPhases.filter(ph=>ph!==phase);
+  schedSave();
+}
 function addProject(){
   const input=document.getElementById('new-proj-input'),name=input.value.trim();
   if(!name)return;if(appData.projects[name]){toast('Already exists','error');return;}
@@ -4069,7 +4481,7 @@ function buildGanttTipHTML(weekIdx, projName, fte, holidays, freezes, projStates
 
       // Find affected resources for this holiday
       const assigned = (appData.resources || []).filter(r =>
-        r.assignments && r.assignments[projName] && r.assignments[projName] > 0
+        r.assignments && getProjectFTE(r, projName) > 0
       );
       const affected = isNational ? assigned : assigned.filter(r => r.state && h.counties.includes(r.state));
 
