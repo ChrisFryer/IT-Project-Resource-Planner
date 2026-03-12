@@ -465,12 +465,34 @@ select.form-input{cursor:pointer}
 .onboard-badge.medium{background:var(--amber-bg);color:var(--amber)}
 .onboard-badge.long{background:var(--red-bg);color:var(--red)}
 
+/* Leadtime popover */
+.leadtime-btn{background:none;border:1px solid var(--border);border-radius:0.25rem;color:var(--accent);cursor:pointer;font-size:0.75rem;padding:0 0.25rem;line-height:1.2;vertical-align:middle;margin-left:0.25rem;transition:all 0.15s}
+.leadtime-btn:hover{background:var(--accent-bg);border-color:var(--accent)}
+.leadtime-popover{position:fixed;z-index:9999;background:var(--surface);border:1px solid var(--border);border-radius:0.5rem;padding:0.75rem 1rem;box-shadow:0 8px 24px rgba(0,0,0,0.18);min-width:22rem;max-width:28rem}
+
 /* Alias */
 .alias-row{display:flex;align-items:center;gap:0.5rem;padding:0.375rem 0;border-bottom:1px solid var(--surface2)}
 .alias-row:last-child{border-bottom:none}
 .alias-tag{display:inline-flex;align-items:center;gap:0.25rem;padding:0.1875rem 0.5rem;border-radius:0.75rem;background:var(--accent-bg);color:var(--accent);font-size:0.75rem;font-weight:600}
 .alias-tag .remove-alias{cursor:pointer;font-size:0.8125rem;opacity:0.6}
 .alias-tag .remove-alias:hover{opacity:1}
+
+/* Setup Guide */
+.setup-guide{background:linear-gradient(135deg,var(--accent-bg),var(--surface));border:2px solid var(--accent);border-radius:0.75rem;padding:1.5rem;margin-bottom:1.5rem;position:relative}
+.setup-guide-title{font-weight:700;font-size:1.125rem;color:var(--accent);margin-bottom:0.75rem;display:flex;align-items:center;gap:0.5rem}
+.setup-guide-steps{display:flex;gap:1rem;flex-wrap:wrap}
+.setup-step{flex:1;min-width:12rem;background:var(--surface);border:1px solid var(--border);border-radius:0.625rem;padding:1rem;position:relative;transition:all 0.2s}
+.setup-step:hover{box-shadow:0 2px 8px rgba(0,0,0,0.08)}
+.setup-step.done{opacity:0.6;border-color:var(--green)}
+.setup-step .step-num{position:absolute;top:-0.5rem;left:-0.5rem;width:1.5rem;height:1.5rem;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:0.75rem;font-weight:700}
+.setup-step.done .step-num{background:var(--green)}
+.setup-step h4{font-size:0.875rem;font-weight:700;color:var(--text);margin:0 0 0.375rem}
+.setup-step p{font-size:0.75rem;color:var(--text2);margin:0 0 0.5rem;line-height:1.4}
+.setup-step .step-action{font-size:0.75rem;font-weight:600;color:var(--accent);cursor:pointer;text-decoration:underline}
+.setup-step .step-action:hover{color:var(--text)}
+.setup-guide-dismiss{position:absolute;top:0.75rem;right:0.75rem;display:flex;gap:0.5rem;align-items:center}
+.setup-guide-dismiss button{background:none;border:1px solid var(--border);border-radius:0.375rem;padding:0.25rem 0.625rem;font-size:0.6875rem;color:var(--text3);cursor:pointer;font-family:'Poppins',sans-serif}
+.setup-guide-dismiss button:hover{background:var(--surface2);color:var(--text)}
 
 /* Freeze/Standdown overlay indicators */
 .freeze-indicator{background:var(--freeze-bg);color:var(--freeze);border:1px dashed var(--freeze);border-radius:0.375rem;padding:0.25rem 0.5rem;font-size:0.6875rem;font-weight:600;display:inline-flex;align-items:center;gap:0.25rem}
@@ -539,20 +561,57 @@ select.form-input{cursor:pointer}
 .portfolio-filename{color:var(--text3);font-size:0.6875rem;font-style:italic;margin-left:auto}
 
 /* Responsive scaling */
+@media(max-width:80rem){
+  .header-actions .btn-header{padding:0.25rem 0.5rem;font-size:0.6875rem}
+  .tab-btn{padding:0.375rem 0.625rem;font-size:0.75rem}
+  .kpi-card{padding:0.75rem}
+  .kpi-value{font-size:1.25rem}
+}
+@media(max-width:64rem){
+  .editor-grid{grid-template-columns:1fr}
+  #app-header{padding:0 1rem;gap:0.75rem}
+  .tab-btn{padding:0.375rem 0.5rem;font-size:0.6875rem}
+  .tab-icon{display:none}
+  .cards-row{gap:0.5rem}
+  .kpi-card{min-width:5rem;padding:0.625rem}
+}
 @media(max-width:48rem){
   html{font-size:14px}
-  #app-header{padding:0 1rem;gap:0.75rem;height:3.25rem}
-  #main{padding:1rem}
-  .editor-grid{grid-template-columns:1fr}
+  #app-header{padding:0 0.5rem;gap:0.5rem;height:3.25rem;flex-wrap:wrap}
+  .logo .brand{font-size:0.875rem}
+  .nav-tabs{order:3;width:100%;padding:0;gap:0.125rem;justify-content:center}
+  .tab-btn{padding:0.25rem 0.375rem;font-size:0.625rem}
+  .header-actions{gap:0.25rem}
+  .header-actions .btn-header{font-size:0.625rem;padding:0.1875rem 0.375rem}
+  .save-indicator{font-size:0.5625rem}
+  #main{padding:0.75rem}
+  .cards-row{flex-wrap:wrap}
+  .kpi-card{flex:1 1 calc(33% - 0.5rem);min-width:4.5rem}
+  .data-table,.heatmap-table,.fte-table,.gantt-table{font-size:0.6875rem}
+  .resource-card{padding:0.75rem}
+  .res-header{flex-direction:column;gap:0.5rem}
 }
+/* Tables: allow horizontal scroll when viewport is narrow */
+.tab-panel{overflow-x:auto}
+.data-table,.heatmap-table,.gantt-table{min-width:fit-content}
 
 /* ==================== PRINT REPORT ==================== */
 .print-btn{display:inline-flex;align-items:center;gap:0.375rem;padding:0.375rem 0.75rem;border:1px solid var(--border);border-radius:0.375rem;background:var(--surface);color:var(--text2);font-size:0.8125rem;font-weight:600;cursor:pointer;transition:all 0.15s;float:right;margin-top:-2rem}
 .print-btn:hover{background:var(--accent-bg);color:var(--accent);border-color:var(--accent)}
 
 @media print{
-  /* Force light theme */
-  :root{color-scheme:light!important}
+  /* Force light theme — override dark mode completely */
+  :root,html[data-theme="dark"]{
+    color-scheme:light!important;
+    --bg:#f4f5f7!important;--surface:#ffffff!important;--surface2:#f0f1f3!important;
+    --border:#e2e4e9!important;--border2:#d1d5db!important;
+    --text:#1a1a2e!important;--text2:#4a5568!important;--text3:#9ca3af!important;
+    --accent:#0891b2!important;--accent-bg:#ecfdf5!important;
+    --green:#16a34a!important;--green-bg:#dcfce7!important;
+    --amber:#d97706!important;--amber-bg:#fef3c7!important;
+    --red:#dc2626!important;--red-bg:#fee2e2!important;
+    --holiday:#9333ea!important
+  }
   html,body{background:#fff!important;color:#1a1a2e!important;font-size:11px!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 
   /* Hide chrome */
@@ -717,6 +776,9 @@ select.form-input{cursor:pointer}
       <div id="print-date"></div>
     </div>
   </div>
+
+  <!-- SETUP GUIDE -->
+  <div id="setup-guide" style="display:none"></div>
 
   <!-- OVERVIEW -->
   <div class="tab-panel active" id="tab-overview">
@@ -994,6 +1056,7 @@ select.form-input{cursor:pointer}
       </div>
       <div class="editor-card">
         <h3>Roles & Aliases</h3>
+        <div style="font-size:0.6875rem;color:var(--text3);margin:-0.75rem 0 0.75rem;line-height:1.4">Set estimated salary ranges per role for cost projections when roles are unfilled. Burden rates are calculated from ACT defaults.</div>
         <div class="roles-list" id="roles-list"></div>
         <div style="display:flex;gap:0.5rem;margin-top:0.75rem">
           <input class="form-input" type="text" id="new-role-input" placeholder="New role name..." style="flex:1">
@@ -1086,7 +1149,7 @@ select.form-input{cursor:pointer}
 
 <script>
 // ===================== VERSION & GITHUB =====================
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.1.1';
 const GITHUB_REPO = 'ChrisFryer/IT-Project-Resource-Planner';
 const GITHUB_URL = 'https://github.com/' + GITHUB_REPO;
 const GITHUB_ISSUES_URL = GITHUB_URL + '/issues';
@@ -1280,6 +1343,8 @@ const DEFAULT_DATA = {
 
 let appData = JSON.parse(JSON.stringify(DEFAULT_DATA));
 let saveTimer = null;
+let renderTimer = null;
+let autoSaveInterval = null;
 let currentPortfolioKey = null;
 let isDirty = false;
 let lastSavedJSON = '';
@@ -1932,6 +1997,11 @@ async function tryLoadFromFile(portfolioName) {
 
 function migrateData() {
   if (!appData.roleAliases) appData.roleAliases = {};
+  if (!appData.roleSalaryEstimates) appData.roleSalaryEstimates = {};
+  // Seed default salary estimates for any roles that don't have them
+  appData.roles.forEach(role => {
+    if (!appData.roleSalaryEstimates[role]) appData.roleSalaryEstimates[role] = { minSalary: 140000, maxSalary: 220000 };
+  });
   if (!appData.resources) appData.resources = [];
   appData.resources.forEach(r => { if (r.maxFTE === undefined) r.maxFTE = 1.0; });
   if (!appData.projectFinancials) appData.projectFinancials = {};
@@ -2036,6 +2106,7 @@ async function manualSave() {
   if (pendingFileHandle && !fileHandle) {
     await reconnectFile();
   }
+  clearTimeout(saveTimer);
   saveData();
   renderAll();
   if (fileHandle) {
@@ -2047,10 +2118,42 @@ async function manualSave() {
   }
 }
 
+function getActiveTab() {
+  const btn = document.querySelector('.tab-btn.active');
+  return btn ? btn.dataset.tab : 'overview';
+}
+function renderActiveTab() {
+  const tab = getActiveTab();
+  const renderers = {
+    overview: renderOverview,
+    gantt: renderGantt,
+    weekly: renderWeeklyHeatmap,
+    monthly: renderMonthlyHeatmap,
+    recruit: renderRecruitmentPlanner,
+    resources: renderResources,
+    financials: renderFinancials,
+    editor: renderEditor
+  };
+  if (renderers[tab]) renderers[tab]();
+  renderSetupGuide();
+}
 function schedSave() {
   markDirty();
+  // Re-render only the active tab after a short debounce
+  clearTimeout(renderTimer);
+  renderTimer = setTimeout(() => { renderActiveTab(); }, 600);
+  // Debounce the actual persist — wait 5s of inactivity, or auto-save interval handles it
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => { saveData(); renderAll(); }, 400);
+  saveTimer = setTimeout(() => { saveData(); }, 5000);
+}
+// Auto-save every 60s if dirty, plus save on tab switch and before unload
+function startAutoSave() {
+  if (autoSaveInterval) clearInterval(autoSaveInterval);
+  autoSaveInterval = setInterval(() => { if (isDirty) saveData(); }, 60000);
+}
+function flushSave() {
+  clearTimeout(saveTimer);
+  if (isDirty) saveData();
 }
 
 // ===================== UTILS =====================
@@ -2310,7 +2413,7 @@ function loadTheme() {
 }
 
 // ===================== RENDERS =====================
-function renderAll() { renderOverview(); renderGantt(); renderWeeklyHeatmap(); renderMonthlyHeatmap(); renderRecruitmentPlanner(); renderResources(); renderFinancials(); renderEditor(); }
+function renderAll() { renderSetupGuide(); renderOverview(); renderGantt(); renderWeeklyHeatmap(); renderMonthlyHeatmap(); renderRecruitmentPlanner(); renderResources(); renderFinancials(); renderEditor(); }
 
 // ===================== PHASE OVERLAP DETECTION =====================
 function getPhaseOverlapWarnings(filterProject) {
@@ -2781,6 +2884,37 @@ function renderMonthlyHeatmap() {
   document.getElementById('monthly-heatmap').innerHTML=html;
 }
 
+function closeAllPopovers() {
+  document.querySelectorAll('.leadtime-popover').forEach(el => { el.style.display = 'none'; });
+}
+function toggleLeadtime(id, evt) {
+  if (evt) evt.stopPropagation();
+  // Close any other open popovers first
+  document.querySelectorAll('.leadtime-popover').forEach(el => { if (el.id !== id) el.style.display = 'none'; });
+  const el = document.getElementById(id);
+  if (!el) return;
+  const isHidden = el.style.display === 'none';
+  el.style.display = isHidden ? '' : 'none';
+  if (isHidden && evt) {
+    // Position next to the button that was clicked
+    const btn = evt.currentTarget || evt.target;
+    const rect = btn.getBoundingClientRect();
+    let top = rect.bottom + 4;
+    let left = rect.left;
+    // Measure popover size after making visible
+    const pRect = el.getBoundingClientRect();
+    // Keep within viewport
+    if (left + pRect.width > window.innerWidth - 8) left = window.innerWidth - pRect.width - 8;
+    if (left < 8) left = 8;
+    if (top + pRect.height > window.innerHeight - 8) top = rect.top - pRect.height - 4;
+    el.style.left = left + 'px';
+    el.style.top = top + 'px';
+  }
+}
+// Close popovers on outside click or scroll
+document.addEventListener('click', (e) => { if (!e.target.closest('.leadtime-popover') && !e.target.closest('.leadtime-btn')) closeAllPopovers(); });
+window.addEventListener('scroll', closeAllPopovers, true);
+
 function renderRecruitmentPlanner() {
   const S=appData.settings;
   document.getElementById('recruit-sub').textContent=`Portfolio start ${fmtDate(parseDate(S.startDate))} \u00B7 Today: ${fmtDate(parseDate(S.todayDate))} \u00B7 Onboarding per project (varies by Agency)`;
@@ -2822,7 +2956,9 @@ function renderRecruitmentPlanner() {
       const coverColor = isCovered ? 'var(--green)' : r.coveredFTE > 0 ? 'var(--amber)' : 'var(--text3)';
       const coverLabel = r.coveredFTE > 0 ? (r.assignedFTE > 0 && r.pipelineCount > 0 ? r.assignedFTE.toFixed(1) + '+' + r.pipelineCount : r.assignedFTE > 0 ? r.assignedFTE.toFixed(1) : r.pipelineCount + 'p') : '\u2014';
       const obC = r.onboardWeeks >= 6 ? 'long' : r.onboardWeeks >= 4 ? 'medium' : 'short';
-      html += `<tr${r.filled ? ' style="opacity:0.6"' : ''}><td class="role-cell">${r.role}</td><td class="num-cell text-accent" style="font-weight:700">${r.peak.toFixed(1)}</td><td class="num-cell" style="font-weight:700;color:${coverColor}" title="${r.assignedFTE.toFixed(1)} assigned, ${r.pipelineCount} in pipeline">${coverLabel}</td><td class="num-cell"><span class="onboard-badge ${obC}">${r.onboardWeeks}w</span></td><td class="date-cell"><strong>${weekLabel(r.firstWeek)}</strong> ${fmtDateShort(r.firstDate)}</td><td class="date-cell ${!isCovered && !stdOK ? 'overdue' : ''}">${isCovered ? '\u2014' : fmtDate(r.stdRecruitBy)}</td><td class="date-cell ${!isCovered && !meritOK && stdOK ? 'warning' : !isCovered && !meritOK ? 'overdue' : ''}">${isCovered ? '\u2014' : fmtDate(r.meritRecruitBy)}</td><td class="num-cell ${isCovered ? 'text-green' : r.weeksUntil < r.meritTotal ? 'text-red' : r.weeksUntil < r.stdTotal ? 'text-amber' : 'text-green'}" style="font-weight:700">${isCovered ? '\u2713' : r.weeksUntil + 'w'}</td><td><span class="status-pill ${r.statusClass}">${r.status}</span></td><td style="font-size:0.8125rem;color:var(--text2);max-width:14rem">${r.action}</td></tr>`;
+      const fnId = 'fn-'+pn.replace(/[^a-zA-Z0-9]/g,'')+'-'+r.role.replace(/[^a-zA-Z0-9]/g,'');
+      const fnPopover = `<div id="${fnId}" class="leadtime-popover" style="display:none"><div style="font-weight:700;color:var(--accent);margin-bottom:0.375rem">Leadtime Breakdown</div><div style="font-size:0.75rem;color:var(--text);margin-bottom:0.5rem"><strong>First Needed:</strong> ${fmtDate(r.firstDate)} (Week ${r.firstWeek})</div><table style="font-size:0.6875rem;border-collapse:collapse;width:100%"><tr style="border-bottom:1px solid var(--border)"><td style="padding:0.25rem 0.375rem;font-weight:600">Standard</td><td style="padding:0.25rem 0.375rem">${S.recruitStandardWeeks}w recruit + ${r.onboardWeeks}w onboard</td><td style="padding:0.25rem 0.375rem;font-weight:700">${r.stdTotal}w</td><td style="padding:0.25rem 0.375rem;color:var(--text2)">${fmtDate(r.stdRecruitBy)}</td></tr><tr style="border-bottom:1px solid var(--border)"><td style="padding:0.25rem 0.375rem;font-weight:600">Merit Pool</td><td style="padding:0.25rem 0.375rem">${S.recruitMeritWeeks}w recruit + ${r.onboardWeeks}w onboard</td><td style="padding:0.25rem 0.375rem;font-weight:700">${r.meritTotal}w</td><td style="padding:0.25rem 0.375rem;color:var(--text2)">${fmtDate(r.meritRecruitBy)}</td></tr></table><div style="margin-top:0.375rem;font-size:0.6875rem;color:var(--text3)">Weeks from today: <strong style="color:var(--text)">${r.weeksUntil}w</strong></div><button onclick="this.parentElement.style.display='none'" style="position:absolute;top:0.25rem;right:0.375rem;background:none;border:none;color:var(--text3);cursor:pointer;font-size:0.875rem">&times;</button></div>`;
+      html += `<tr${r.filled ? ' style="opacity:0.6"' : ''}><td class="role-cell">${r.role}</td><td class="num-cell text-accent" style="font-weight:700">${r.peak.toFixed(1)}</td><td class="num-cell" style="font-weight:700;color:${coverColor}" title="${r.assignedFTE.toFixed(1)} assigned, ${r.pipelineCount} in pipeline">${coverLabel}</td><td class="num-cell"><span class="onboard-badge ${obC}">${r.onboardWeeks}w</span></td><td class="date-cell"><strong>${weekLabel(r.firstWeek)}</strong> ${fmtDateShort(r.firstDate)} <button class="leadtime-btn" onclick="toggleLeadtime('${fnId}',event)" title="View leadtime breakdown">&#9432;</button>${fnPopover}</td><td class="date-cell ${!isCovered && !stdOK ? 'overdue' : ''}">${isCovered ? '\u2014' : fmtDate(r.stdRecruitBy)}</td><td class="date-cell ${!isCovered && !meritOK && stdOK ? 'warning' : !isCovered && !meritOK ? 'overdue' : ''}">${isCovered ? '\u2014' : fmtDate(r.meritRecruitBy)}</td><td class="num-cell ${isCovered ? 'text-green' : r.weeksUntil < r.meritTotal ? 'text-red' : r.weeksUntil < r.stdTotal ? 'text-amber' : 'text-green'}" style="font-weight:700">${isCovered ? '\u2713' : r.weeksUntil + 'w'}</td><td><span class="status-pill ${r.statusClass}">${r.status}</span></td><td style="font-size:0.8125rem;color:var(--text2);max-width:14rem">${r.action}</td></tr>`;
     });
   });
   html += '</tbody>';
@@ -3374,6 +3510,7 @@ function calcProjectFinancials(projName){
     // Calculate blended hourly rate and hours-per-day for assigned resources
     let blendedHourlyRate = 0;
     let blendedHrsPerDay = 8;
+    let estInfo = null;
     if(assignedRes.length>0){
       let weightedRate = 0;
       let weightedHpd = 0;
@@ -3387,11 +3524,17 @@ function calcProjectFinancials(projName){
         blendedHourlyRate = weightedRate / totalAssignedFTE;
         blendedHrsPerDay = weightedHpd / totalAssignedFTE;
       }
+      estInfo = null;
     } else {
-      const estResource={salary:140000,dailyRate:0,resourceType:'permanent',state:'AU-ACT'};
+      const roleEst = (appData.roleSalaryEstimates || {})[role];
+      const minSal = roleEst ? (roleEst.minSalary || 0) : 0;
+      const maxSal = roleEst ? (roleEst.maxSalary || 0) : 0;
+      const estSalary = (minSal + maxSal) > 0 ? Math.round((minSal + maxSal) / 2) : 140000;
+      const estResource={salary:estSalary,dailyRate:0,resourceType:'permanent',state:'AU-ACT'};
       const estBurden=calcBurdenRate(estResource);
       blendedHourlyRate = estBurden.hourlyRate;
       blendedHrsPerDay = estBurden.annualHours / 260;
+      estInfo = { minSalary: minSal || 140000, maxSalary: maxSal || 220000, midSalary: estSalary, hourlyRate: estBurden.hourlyRate, burdenPct: estBurden.totalBurdenPct, annualCost: estBurden.annualBurdenCost };
     }
 
     // Iterate week-by-week, resolving demand per week accounting for shared phases
@@ -3428,7 +3571,7 @@ function calcProjectFinancials(projName){
     totalLabourCost+=roleTotalCost;
     if (isOverhead) totalOverheadCost+=roleTotalCost;
     else totalDirectCost+=roleTotalCost;
-    costByRole[role]={fteWeeks:totalFTEWeeks, cost:roleTotalCost, hasAssigned:assignedRes.length>0, assignedFTE:totalAssignedFTE, peakDemandFTE, overAllocWeeks, assignedCount:assignedRes.length, isOverhead};
+    costByRole[role]={fteWeeks:totalFTEWeeks, cost:roleTotalCost, hasAssigned:assignedRes.length>0, assignedFTE:totalAssignedFTE, peakDemandFTE, overAllocWeeks, assignedCount:assignedRes.length, isOverhead, estInfo, hourlyRate:blendedHourlyRate};
   });
 
   const contingencyAmt=totalLabourCost*(fin.contingency/100);
@@ -3614,9 +3757,11 @@ function renderFinProjectDetail(){
       ? '<span class="status-pill status-ok">Filled</span>'
       : d.hasAssigned
       ? '<span class="status-pill status-warn">Partial</span>'
+      : d.estInfo
+      ? (() => { const eId='fin-est-'+role.replace(/[^a-zA-Z0-9]/g,''); return `<span style="position:relative;display:inline-flex;align-items:center;gap:0.25rem"><span class="pool-badge available">Estimate</span><button class="leadtime-btn" onclick="toggleLeadtime('${eId}',event)" title="View estimate breakdown">&#9432;</button><div id="${eId}" class="leadtime-popover" style="display:none"><div style="font-weight:700;color:var(--accent);margin-bottom:0.375rem">Cost Estimate Breakdown</div><table style="font-size:0.6875rem;border-collapse:collapse;width:100%"><tr style="border-bottom:1px solid var(--border)"><td style="padding:0.25rem 0.375rem;color:var(--text3)">Salary range</td><td style="padding:0.25rem 0.375rem;font-weight:600">${fmtDollar(d.estInfo.minSalary)} \u2013 ${fmtDollar(d.estInfo.maxSalary)}</td></tr><tr style="border-bottom:1px solid var(--border)"><td style="padding:0.25rem 0.375rem;color:var(--text3)">Midpoint used</td><td style="padding:0.25rem 0.375rem;font-weight:600">${fmtDollar(d.estInfo.midSalary)}</td></tr><tr style="border-bottom:1px solid var(--border)"><td style="padding:0.25rem 0.375rem;color:var(--text3)">Burden uplift</td><td style="padding:0.25rem 0.375rem;font-weight:600">${d.estInfo.burdenPct.toFixed(1)}% (ACT)</td></tr><tr style="border-bottom:1px solid var(--border)"><td style="padding:0.25rem 0.375rem;color:var(--text3)">Burden $/hr</td><td style="padding:0.25rem 0.375rem;font-weight:700;color:var(--accent)">$${d.estInfo.hourlyRate.toFixed(2)}</td></tr><tr><td style="padding:0.25rem 0.375rem;color:var(--text3)">Annual cost/FTE</td><td style="padding:0.25rem 0.375rem;font-weight:600">${fmtDollar(d.estInfo.annualCost)}/yr</td></tr></table><div style="margin-top:0.5rem;font-size:0.625rem;color:var(--text3)">Adjust in Configuration \u2192 Roles &amp; Aliases</div><button onclick="this.parentElement.style.display=&apos;none&apos;" style="position:absolute;top:0.25rem;right:0.375rem;background:none;border:none;color:var(--text3);cursor:pointer;font-size:0.875rem">&times;</button></div></span>`; })()
       : '<span class="pool-badge available">Estimate</span>';
     const ohTag = d.isOverhead ? ' <span style="font-size:0.5625rem;padding:0.0625rem 0.25rem;border-radius:0.25rem;background:var(--amber-bg,rgba(245,158,11,0.15));color:var(--amber);font-weight:600;vertical-align:middle">OH</span>' : '';
-    html+=`<tr${isOver?' style="background:rgba(220,38,38,0.06)"':d.isOverhead?' style="background:rgba(245,158,11,0.04)"':''}><td style="font-weight:500">${role}${ohTag}</td><td style="text-align:center">${d.peakDemandFTE.toFixed(1)}</td><td style="text-align:center;font-weight:600;color:${isOver?'var(--red)':isFilled?'var(--green)':'var(--text)'}">${d.hasAssigned?d.assignedFTE.toFixed(1)+' ('+d.assignedCount+')':'\u2014'}</td><td style="text-align:center">${d.fteWeeks.toFixed(1)}</td><td style="font-family:'JetBrains Mono',monospace;font-weight:600">${fmtDollar(d.cost)}</td><td>${statusBadge}</td><td><div class="margin-bar" style="width:6rem;display:inline-block;vertical-align:middle"><div class="margin-bar-fill" style="width:${pct}%;background:${isOver?'var(--red)':d.isOverhead?'var(--amber)':'var(--accent)'}"></div></div> ${pct.toFixed(1)}%</td></tr>`;
+    html+=`<tr${isOver?' style="background:rgba(220,38,38,0.06)"':d.isOverhead?' style="background:rgba(245,158,11,0.04)"':''}><td style="font-weight:500">${role}${ohTag}</td><td style="text-align:center">${d.peakDemandFTE.toFixed(1)}</td><td style="text-align:center;font-weight:600;color:${isOver?'var(--red)':isFilled?'var(--green)':'var(--text)'}">${d.hasAssigned?d.assignedFTE.toFixed(1)+' ('+d.assignedCount+')':'\u2014'}</td><td style="text-align:center">${d.fteWeeks.toFixed(1)}</td><td style="font-family:'JetBrains Mono',monospace;font-weight:600">${fmtDollar(d.cost)}${d.estInfo?' <span style="color:var(--text3);font-size:0.625rem">est.</span>':''}</td><td>${statusBadge}</td><td><div class="margin-bar" style="width:6rem;display:inline-block;vertical-align:middle"><div class="margin-bar-fill" style="width:${pct}%;background:${isOver?'var(--red)':d.isOverhead?'var(--amber)':'var(--accent)'}"></div></div> ${pct.toFixed(1)}%</td></tr>`;
     if(isOver) html+=`<tr style="background:rgba(220,38,38,0.06)"><td colspan="7" style="font-size:0.6875rem;color:var(--red);padding:0.125rem 0.5rem">&#9888; ${d.assignedFTE.toFixed(1)} FTE assigned vs ${d.peakDemandFTE.toFixed(1)} peak demand &mdash; ${(d.assignedFTE-d.peakDemandFTE).toFixed(1)} FTE over-allocation costed for ${d.overAllocWeeks}w</td></tr>`;
   });
 
@@ -3857,7 +4002,24 @@ function updateBurdenComponent(state, field, value) {
 }
 
 function renderRolesList() {
-  document.getElementById('roles-list').innerHTML=appData.roles.map((role,i)=>`<div class="role-item"><span style="color:var(--text3);font-size:0.75rem;width:1.5rem;text-align:right;font-weight:600">${i+1}</span><input value="${role}" onchange="updateRole(${i},this.value)"><button class="del-btn" onclick="deleteRole(${i})" title="Delete">&times;</button></div>`).join('');
+  const est = appData.roleSalaryEstimates || {};
+  document.getElementById('roles-list').innerHTML=appData.roles.map((role,i)=>{
+    const re = est[role] || {};
+    const minSal = re.minSalary || '';
+    const maxSal = re.maxSalary || '';
+    const bc = getBurdenConfig();
+    const comp = bc.components['AU-ACT'] || {};
+    const annHrs = comp.annualHours || 2080;
+    // Compute burden rate range for display
+    let rateHint = '';
+    if (minSal || maxSal) {
+      const totalPct = Object.entries(comp).filter(([k])=>k!=='annualHours').reduce((s,[,v])=>s+v,0) + (bc.superRate || 11.5);
+      const minRate = minSal ? (minSal * (1 + totalPct / 100) / annHrs).toFixed(2) : '?';
+      const maxRate = maxSal ? (maxSal * (1 + totalPct / 100) / annHrs).toFixed(2) : '?';
+      rateHint = `<span style="font-size:0.625rem;color:var(--text3);margin-left:0.25rem" title="Estimated burden $/hr range (ACT rates)">$${minRate}\u2013$${maxRate}/hr</span>`;
+    }
+    return `<div class="role-item" style="flex-wrap:wrap;gap:0.375rem"><div style="display:flex;align-items:center;gap:0.375rem;flex:1;min-width:12rem"><span style="color:var(--text3);font-size:0.75rem;width:1.5rem;text-align:right;font-weight:600">${i+1}</span><input value="${role}" onchange="updateRole(${i},this.value)" style="flex:1"><button class="del-btn" onclick="deleteRole(${i})" title="Delete">&times;</button></div><div style="display:flex;align-items:center;gap:0.25rem;font-size:0.6875rem;color:var(--text2)" title="Estimated base salary range for unfilled role estimates"><span style="white-space:nowrap">Est. $</span><input class="form-input" type="number" value="${minSal}" min="0" step="5000" style="width:5.5rem;font-size:0.6875rem;padding:0.125rem 0.25rem" placeholder="Min" onchange="updateRoleSalaryEst('${role.replace(/'/g,"\\'")}','minSalary',+this.value)"><span>\u2013</span><input class="form-input" type="number" value="${maxSal}" min="0" step="5000" style="width:5.5rem;font-size:0.6875rem;padding:0.125rem 0.25rem" placeholder="Max" onchange="updateRoleSalaryEst('${role.replace(/'/g,"\\'")}','maxSalary',+this.value)">${rateHint}</div></div>`;
+  }).join('');
 }
 
 function renderAliasEditor() {
@@ -4277,17 +4439,26 @@ function updateRole(i,newName){
   const old=appData.roles[i];appData.roles[i]=newName;
   Object.values(appData.projects).forEach(p=>{if(p.fte[old]!==undefined){p.fte[newName]=p.fte[old];delete p.fte[old];}});
   if(appData.roleAliases[old]){appData.roleAliases[newName]=appData.roleAliases[old];delete appData.roleAliases[old];}
+  if(appData.roleSalaryEstimates&&appData.roleSalaryEstimates[old]){appData.roleSalaryEstimates[newName]=appData.roleSalaryEstimates[old];delete appData.roleSalaryEstimates[old];}
   schedSave();
 }
 function deleteRole(i){
   const role=appData.roles[i];if(!confirm(`Delete "${role}"?`))return;
   appData.roles.splice(i,1);Object.values(appData.projects).forEach(p=>delete p.fte[role]);
-  delete appData.roleAliases[role];schedSave();toast('Role deleted','info');
+  delete appData.roleAliases[role];if(appData.roleSalaryEstimates)delete appData.roleSalaryEstimates[role];schedSave();toast('Role deleted','info');
+}
+function updateRoleSalaryEst(role, field, value) {
+  if (!appData.roleSalaryEstimates) appData.roleSalaryEstimates = {};
+  if (!appData.roleSalaryEstimates[role]) appData.roleSalaryEstimates[role] = {};
+  appData.roleSalaryEstimates[role][field] = value || 0;
+  schedSave();
 }
 function addRole(){
   const input=document.getElementById('new-role-input'),name=input.value.trim();
   if(!name)return;if(appData.roles.includes(name)){toast('Already exists','error');return;}
   appData.roles.push(name);Object.values(appData.projects).forEach(p=>{const phLen=getProjectPhases(p).length;p.fte[name]=new Array(phLen).fill(0);});
+  if(!appData.roleSalaryEstimates)appData.roleSalaryEstimates={};
+  appData.roleSalaryEstimates[name]={minSalary:140000,maxSalary:200000};
   input.value='';schedSave();toast('Role added: '+name,'info');
 }
 function addAlias(){
@@ -4567,10 +4738,14 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{btn.addEventListener('click'
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
   document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
   btn.classList.add('active');document.getElementById('tab-'+btn.dataset.tab).classList.add('active');
+  flushSave();
+  renderActiveTab();
+  window.scrollTo({top:0,behavior:'instant'});
 });});
 
 // ===================== SAFETY =====================
 window.addEventListener('beforeunload', function(e) {
+  flushSave();
   if (isDirty) {
     e.preventDefault();
     e.returnValue = 'You have unsaved changes. Are you sure you want to leave?';
@@ -4686,6 +4861,54 @@ async function downloadUpdate(){
 
 // ===================== INIT =====================
 loadTheme();
+// ===================== SETUP GUIDE =====================
+const GUIDE_DISMISSED_KEY = 'rp_guide_dismissed';
+function renderSetupGuide() {
+  const el = document.getElementById('setup-guide');
+  if (!el) return;
+  // Don't show if user has permanently dismissed
+  if (localStorage.getItem(GUIDE_DISMISSED_KEY) === 'true') { el.style.display = 'none'; return; }
+  // Check completion status of each step
+  const hasProjects = Object.keys(appData.projects).length > 0;
+  const hasRoles = appData.roles.length > 0;
+  const hasResources = (appData.resources || []).length > 0;
+  const hasAssignments = (appData.resources || []).some(r => Object.keys(r.assignments || {}).length > 0);
+  const hasFinancials = (appData.resources || []).some(r => (r.salary > 0 || r.dailyRate > 0));
+  // Hide guide if all steps complete
+  if (hasProjects && hasRoles && hasResources && hasAssignments && hasFinancials) { el.style.display = 'none'; return; }
+  const steps = [
+    { done: hasRoles && hasProjects, title: 'Configure Projects', desc: 'Define your roles, then add projects with phases and FTE requirements in Configuration.', tab: 'editor', action: 'Go to Configuration' },
+    { done: hasFinancials, title: 'Set Financial Data', desc: 'Add salary or day rates for your resources. Review burden rates and cost estimates in Financials.', tab: 'financials', action: 'Go to Financials' },
+    { done: hasResources && hasAssignments, title: 'Add & Assign Resources', desc: 'Add your team members, set their roles and rates, then assign them to projects.', tab: 'resources', action: 'Go to Resources' }
+  ];
+  const completedCount = steps.filter(s => s.done).length;
+  el.style.display = '';
+  el.innerHTML = `<div class="setup-guide">
+    <div class="setup-guide-dismiss">
+      <button onclick="dismissGuide(false)" title="Hide until next session">Hide</button>
+      <button onclick="dismissGuide(true)" title="Don't show this guide again">Don't show again</button>
+    </div>
+    <div class="setup-guide-title">&#128640; Getting Started (${completedCount}/${steps.length} complete)</div>
+    <div style="font-size:0.8125rem;color:var(--text2);margin-bottom:1rem">Follow these steps to set up your resource plan. This guide will disappear once all steps are complete.</div>
+    <div class="setup-guide-steps">
+      ${steps.map((s, i) => `<div class="setup-step${s.done ? ' done' : ''}">
+        <div class="step-num">${s.done ? '&#10003;' : i + 1}</div>
+        <h4>${s.title}</h4>
+        <p>${s.desc}</p>
+        ${s.done ? '<span style="font-size:0.75rem;color:var(--green);font-weight:600">&#10003; Complete</span>' : `<span class="step-action" onclick="navigateToTab('${s.tab}')">${s.action} &rarr;</span>`}
+      </div>`).join('')}
+    </div>
+  </div>`;
+}
+function dismissGuide(permanent) {
+  if (permanent) localStorage.setItem(GUIDE_DISMISSED_KEY, 'true');
+  document.getElementById('setup-guide').style.display = 'none';
+}
+function navigateToTab(tab) {
+  const btn = document.querySelector(`.tab-btn[data-tab="${tab}"]`);
+  if (btn) btn.click();
+}
+
 initPortfolios();
 (async function init() {
   const loaded = loadData();
@@ -4730,6 +4953,7 @@ initPortfolios();
   lastSavedJSON = JSON.stringify(appData);
   renderAll();
   updateFileStatus();
+  startAutoSave();
   // Browser compatibility warning
   if (!hasFileSystemAccess) {
     const banner = document.createElement('div');

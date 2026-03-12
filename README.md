@@ -17,12 +17,14 @@ A single-file, browser-based resource planning tool designed for managing IT pro
 - Create, rename, switch between, and delete multiple portfolios
 - Each portfolio maintains its own set of projects, roles, resources, settings, and financial data
 - Data is stored in browser `localStorage` with optional JSON file linking for persistent storage
+- **Multi-session diff**: compare portfolio changes across saved sessions
 
 ### JSON File Linking
 - Link a portfolio to a `.json` file on disk using the File System Access API
 - Changes auto-save directly to the linked file (no manual export needed)
 - File handles persist across page refreshes via IndexedDB
 - Amber warning indicator when no file is linked — click to link one
+- **Smart save debouncing**: UI renders after 600ms of inactivity, data persists after 5s, with a 60s auto-save interval — keeps typing responsive
 - Manual import/export available as fallback
 
 ### Dashboard Tabs
@@ -52,9 +54,13 @@ A single-file, browser-based resource planning tool designed for managing IT pro
 - Configurable onboarding lead time per role
 - Separate "Potential Roles" section for Pipeline and Prospect projects (not counted for active recruitment)
 - Recruitment timeline aligned to project start dates
+- **First Needed popover**: click to see detailed breakdown of which project and phase drives each role's earliest demand date
 
 #### Resource Management
 - Add and manage named resources with role, start date, end date, state, salary, and project assignment
+- **Multi-role assignments**: resources can be assigned to multiple roles across different projects (or multiple roles on the same project)
+- **Time-aware over-allocation detection**: warns only when assigned roles actually overlap in time, respecting shared-phase logic
+- **No-planned-effort warnings**: highlights when a role is assigned to a project that has no FTE allocation for that role
 - Assignment blocked for non-contracted projects (shows warning)
 - Per-resource cost tracking with state-specific burden rates
 - Supports full-time and part-time allocations
@@ -66,6 +72,8 @@ A single-file, browser-based resource planning tool designed for managing IT pro
   - **Forecast**: High Confidence, Pipeline, and Prospect projects shown separately
 - KPI summary cards for revenue, cost, and margin
 - Per-project detail table with phase-level breakdown
+- **Role salary estimates**: configurable min/max salary range per role (set in Configuration), used for cost projections on unfilled positions
+- **Estimate info popovers**: click to see the full calculation breakdown (salary range, burden rate, hourly rate) when estimates are used
 
 ### Project Configuration
 
@@ -109,15 +117,27 @@ Each project has a contract status that controls planning behaviour:
 - **Australian Financial Year**: Jul–Jun quarters used for date calculations
 - **Public holidays**: fetched from nager.at API by Australian state
 - **Burden rate components**: superannuation, payroll tax, WorkCover, leave loading — configurable per state
+- **Role salary estimates**: min/max salary range per role used for financial projections on unfilled positions
 
 ### Print / Reports
 - Each tab has a print button that generates a print-friendly view
+- **Always prints in light mode** — dark theme is automatically overridden for print output
 - Uses `@media print` CSS — no external dependencies
 - Optimised page breaks prevent content from being cut across pages
 - Header with portfolio name, report title, and generation date
 - Footer with confidentiality notice
 - Financials auto-switches to the full Contracted vs Forecast view when printing
 - Use your browser's "Save as PDF" to create PDF reports
+
+### Onboarding Guide
+- First-time setup wizard guides new users through 3 steps: Configure Projects, Set Financial Data, Add & Assign Resources
+- Auto-detects completion state and highlights remaining steps
+- Dismissible permanently via "Don't show again" option (stored in localStorage)
+
+### Responsive Design
+- Adaptive layout with breakpoints at 80rem, 64rem, and 48rem
+- Mobile-friendly with wrapped navigation bars and scaled-down controls
+- Horizontal scrolling on data-heavy tables to prevent content clipping
 
 ### Theme
 - Light and dark mode toggle
@@ -147,7 +167,8 @@ All portfolio data is stored as JSON with the following top-level structure:
   "roles": [ ... ],
   "projects": { ... },
   "resources": [ ... ],
-  "projectFinancials": { ... }
+  "projectFinancials": { ... },
+  "roleSalaryEstimates": { "Solution Architect": { "minSalary": 140000, "maxSalary": 220000 }, ... }
 }
 ```
 
@@ -172,7 +193,7 @@ Each project contains:
 - **Zero dependencies** — single HTML file with inline CSS and JavaScript
 - **No build step** — open the file and it works
 - **No server required** — runs entirely in the browser
-- **~3,500+ lines** of vanilla HTML/CSS/JS
+- **~5,000 lines** of vanilla HTML/CSS/JS
 - Uses Google Fonts (Poppins, JetBrains Mono) loaded via CDN
 
 ## File Structure
