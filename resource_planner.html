@@ -520,6 +520,7 @@ select.form-input{cursor:pointer}
 .pool-badge{padding:0.1875rem 0.5rem;border-radius:0.75rem;font-size:0.6875rem;font-weight:700}
 .pool-badge.assigned{background:var(--green-bg);color:var(--green)}
 .pool-badge.merit-pool{background:rgba(139,92,246,0.1);color:#7C3AED}
+.pool-badge.internal-merit{background:rgba(16,185,129,0.12);color:#047857;border:1px dashed #047857}
 .pool-badge.interviewing{background:var(--amber-bg);color:var(--amber)}
 .pool-badge.available{background:var(--accent-bg);color:var(--accent)}
 .pool-badge.offered{background:rgba(0,119,182,0.1);color:#0077B6}
@@ -875,6 +876,7 @@ select.form-input{cursor:pointer}
           <div class="form-row"><label>Status</label>
             <select class="form-input" id="res-status">
               <option value="available">Available</option>
+              <option value="internal-merit">Internal Merit Pool</option>
               <option value="merit-pool">Merit Pool</option>
               <option value="interviewing">Interviewing</option>
               <option value="offered">Offered</option>
@@ -919,6 +921,7 @@ select.form-input{cursor:pointer}
         <select class="form-input" id="res-filter-status" style="max-width:10rem" onchange="renderResources()">
           <option value="">All statuses</option>
           <option value="available">Available</option>
+          <option value="internal-merit">Internal Merit Pool</option>
           <option value="merit-pool">Merit Pool</option>
           <option value="interviewing">Interviewing</option>
           <option value="offered">Offered</option>
@@ -2013,6 +2016,7 @@ function migrateData() {
     if (r.atRisk === undefined) r.atRisk = false;
     if (r.availableForReassignment === undefined) r.availableForReassignment = false;
     if (r.reassignAvailableDate === undefined) r.reassignAvailableDate = '';
+    if (r.internalAvailableDate === undefined) r.internalAvailableDate = '';
   });
   if (!appData.projectFinancials) appData.projectFinancials = {};
   if (!appData.settings.holidayStates) appData.settings.holidayStates = ['AU-ACT'];
@@ -2360,8 +2364,10 @@ function getRecruitmentData(wd, statusFilter) {
     const assignedFTE = assignedResources.reduce((sum, r) => {
       return sum + getAssignmentList(r).filter(a => a.role === role && projectSet.has(a.project)).reduce((s, a) => s + a.fte, 0);
     }, 0);
-    const pipelineResources = resources.filter(r => r.role === role && r.status !== 'assigned');
+    const pipelineResources = resources.filter(r => r.role === role && r.status !== 'assigned' && r.status !== 'internal-merit');
     const pipelineCount = pipelineResources.length;
+    const internalMeritResources = resources.filter(r => r.role === role && r.status === 'internal-merit');
+    const internalMeritCount = internalMeritResources.length;
     let onboardWeeks = 2;
     projects.forEach(pn => { const p = appData.projects[pn]; if (p.onboardWeeks > onboardWeeks) onboardWeeks = p.onboardWeeks; });
     const stdTotal = S.recruitStandardWeeks + onboardWeeks;
@@ -2436,11 +2442,14 @@ function getRecruitmentDataByProject(statusFilter) {
         effectiveFTE += roleFTE;
       });
       // Pipeline resources for this role (not project-specific)
-      const pipelineResources = resources.filter(r => r.role === role && r.status !== 'assigned');
+      const pipelineResources = resources.filter(r => r.role === role && r.status !== 'assigned' && r.status !== 'internal-merit');
       const pipelineCount = pipelineResources.length;
+      // Internal merit pool resources — no recruitment leadtime, only onboarding
+      const internalMeritResources = resources.filter(r => r.role === role && r.status === 'internal-merit');
+      const internalMeritCount = internalMeritResources.length;
       // Use effective FTE for classification (ignoring end-dated and over-alloc secondary resources)
       const weeksUntil = Math.floor(daysBetween(today, firstDate) / 7);
-      const cls = classifyRecruitmentStatus(role, peak, effectiveFTE, pipelineCount, weeksUntil, stdTotal, meritTotal, onboardWeeks);
+      const cls = classifyRecruitmentStatus(role, peak, effectiveFTE, pipelineCount + internalMeritCount, weeksUntil, stdTotal, meritTotal, onboardWeeks);
       // Override action text if we have end-date or over-alloc secondary warnings
       let action = cls.action;
       if (endDateWarnings.length > 0 && effectiveFTE < peak) {
@@ -2482,7 +2491,7 @@ function getRecruitmentDataByProject(statusFilter) {
           finalCls.statusClass = 'status-danger';
         }
       }
-      results.push({ project: pn, role, firstWeek, firstDate, peak, assignedFTE: effectiveFTE, rawAssignedFTE, pipelineCount, coveredFTE: finalCls.coveredFTE, filled: finalCls.filled, stdRecruitBy, meritRecruitBy, onboardBy, weeksUntil: recruitWeeksUntil !== weeksUntil ? recruitWeeksUntil : weeksUntil, status: finalCls.status, statusClass: finalCls.statusClass, action: finalCls.action || action, stdTotal, meritTotal, onboardWeeks, assignedResources, pipelineResources, endDateWarnings, overAllocSecWarnings });
+      results.push({ project: pn, role, firstWeek, firstDate, peak, assignedFTE: effectiveFTE, rawAssignedFTE, pipelineCount, internalMeritCount, internalMeritResources, coveredFTE: finalCls.coveredFTE, filled: finalCls.filled, stdRecruitBy, meritRecruitBy, onboardBy, weeksUntil: recruitWeeksUntil !== weeksUntil ? recruitWeeksUntil : weeksUntil, status: finalCls.status, statusClass: finalCls.statusClass, action: finalCls.action || action, stdTotal, meritTotal, onboardWeeks, assignedResources, pipelineResources, endDateWarnings, overAllocSecWarnings });
     });
   });
   return results;
@@ -2741,10 +2750,12 @@ function renderOverview() {
   rd.forEach(r=>{
     const hasEndRisk = r.endDateWarnings && r.endDateWarnings.length > 0;
     const hasOverAllocSec = r.overAllocSecWarnings && r.overAllocSecWarnings.length > 0;
+    const hasInternalOrPipeline = (r.internalMeritCount||0)>0 || r.pipelineCount>0;
     if(hasEndRisk) buckets.ending.push(r);
     else if(hasOverAllocSec) buckets.overalloc.push(r);
+    else if(r.filled && !hasInternalOrPipeline) buckets.filled.push(r);
+    else if(hasInternalOrPipeline && !r.filled) buckets.pipeline.push(r);
     else if(r.filled) buckets.filled.push(r);
-    else if(r.pipelineCount>0) buckets.pipeline.push(r);
     else if(r.assignedFTE>0) buckets.partial.push(r);
     else if(r.statusClass==='status-ok') buckets.ok.push(r);
     else if(r.statusClass==='status-warn') buckets.recruit.push(r);
@@ -2759,7 +2770,15 @@ function renderOverview() {
       const resNames = (r.assignedResources || []).map(res => res.name);
       const pipeNames = (r.pipelineResources || []).map(res => res.name);
       let detail = '';
-      if (resNames.length) detail += '<span style="color:var(--green)">' + resNames.join(', ') + '</span>';
+      // Internal merit pool — shown first (preferred over external)
+      const intMerit = r.internalMeritResources || [];
+      if (intMerit.length) {
+        detail += '<span style="color:#047857;font-weight:700">&#9733; ' + intMerit.map(c => {
+          const avail = c.internalAvailableDate || 'TBD';
+          return c.name + ' (internal, avail: ' + avail + ')';
+        }).join(', ') + '</span>';
+      }
+      if (resNames.length) detail += (detail ? ' + ' : '') + '<span style="color:var(--green)">' + resNames.join(', ') + '</span>';
       if (pipeNames.length) detail += (detail ? ' + ' : '') + '<span style="color:var(--amber)">' + pipeNames.join(', ') + ' (pipeline)</span>';
       // End date warnings
       let warnings = '';
@@ -2799,7 +2818,7 @@ function renderOverview() {
     recruitKpiCard('Filled', buckets.filled, 'var(--green)', 'Fully covered', 'Assigned FTE meets or exceeds peak demand') +
     recruitKpiCard('Ending', buckets.ending, buckets.ending.length>0?'var(--amber)':'var(--text3)', 'Resource leaving', 'Assigned resource has an end date — replacement recruitment needed') +
     recruitKpiCard('Over-committed', buckets.overalloc, buckets.overalloc.length>0?'var(--red)':'var(--text3)', 'Secondary role', 'Resource over max FTE on a secondary role — dedicated resource needed') +
-    recruitKpiCard('In Pipeline', buckets.pipeline, 'var(--green)', 'Candidates identified', 'Resources in pipeline (merit pool, interviewing, offered) — not yet assigned') +
+    recruitKpiCard('In Pipeline', buckets.pipeline, 'var(--green)', (()=>{const ic=buckets.pipeline.filter(x=>(x.internalMeritCount||0)>0).length;return ic>0?ic+' internal, '+(buckets.pipeline.length-ic)+' external':'Candidates identified';})(), 'Resources in pipeline — internal merit (onboard only) highlighted over external candidates') +
     recruitKpiCard('Partial', buckets.partial, 'var(--amber)', 'Assigned but gaps remain', 'Some FTE assigned but does not fully cover peak demand — recruit more') +
     recruitKpiCard('On Track', buckets.ok, 'var(--green)', 'Time to recruit normally', 'No coverage yet but enough lead time for standard recruitment') +
     recruitKpiCard('Recruit Now', buckets.recruit, 'var(--amber)', 'Merit pool window only', 'No coverage — standard window passed, merit pool / direct sourcing only') +
@@ -2825,6 +2844,30 @@ function renderOverview() {
       ${recruitRoleDetail(dp.roles, dp.empty)}
     </div>`
   ).join('');
+
+  // Internal merit pool summary (all internal-merit resources, regardless of role match)
+  const allInternalMerit = (appData.resources || []).filter(r => r.status === 'internal-merit');
+  if (allInternalMerit.length > 0) {
+    kpiEl.innerHTML += `<div style="width:100%;padding:0.5rem 0.75rem;background:rgba(16,185,129,0.06);border:1px dashed rgba(4,120,87,0.3);border-radius:0.5rem;margin-top:0.5rem">
+      <div style="font-weight:700;font-size:0.75rem;color:#047857;margin-bottom:0.375rem;text-transform:uppercase">&#9733; Internal Merit Pool &mdash; ${allInternalMerit.length} resource${allInternalMerit.length!==1?'s':''} (onboarding only, no recruitment leadtime)</div>
+      ${allInternalMerit.map(r => {
+        const avail = r.internalAvailableDate || '';
+        const td = parseDate(S.todayDate);
+        let availLabel = 'Date not set';
+        if (avail) {
+          const ad = parseDate(avail);
+          const wk = Math.floor(daysBetween(td, ad) / 7);
+          availLabel = wk <= 0 ? '<strong style="color:#047857">Available now</strong>' : 'Available in <strong>' + wk + 'w</strong> (' + fmtDateShort(ad) + ')';
+        }
+        // Find which project roles this person could fill
+        const matchingRoles = rd.filter(pr => pr.role === r.role && !pr.filled);
+        const matchHTML = matchingRoles.length > 0
+          ? matchingRoles.map(pr => '<span style="color:var(--accent)">' + esc(pr.project) + ' \u2014 ' + esc(pr.role) + '</span>').join(', ')
+          : '<span style="color:var(--text3)">No unfilled project roles match</span>';
+        return '<div style="font-size:0.75rem;padding:0.1875rem 0;border-bottom:1px solid rgba(4,120,87,0.15)"><div style="display:flex;justify-content:space-between;gap:0.5rem;flex-wrap:wrap"><strong>' + esc(r.name) + '</strong><span style="color:var(--text2)">' + esc(r.role) + '</span><span>' + availLabel + '</span></div><div style="font-size:0.6875rem;color:var(--text2)">Could fill: ' + matchHTML + '</div></div>';
+      }).join('')}
+    </div>`;
+  }
 
   // Potential roles from pipeline/prospect projects
   const potentialWD=getWeeklyDemand(POTENTIAL_STATUSES);
@@ -3052,9 +3095,11 @@ function renderRecruitmentPlanner() {
   const riskRes = assignedRes.filter(r => r.atRisk || (r.endDate && Math.floor(daysBetween(parseDate(S.todayDate), parseDate(r.endDate)) / 7) <= 8));
   const overAllocRes = assignedRes.filter(r => getPeakAssignedFTE(r).peak > (r.maxFTE || 1.0));
   const reassignRes = allRes.filter(r => r.availableForReassignment && r.status === 'assigned');
+  const internalMeritRes = allRes.filter(r => r.status === 'internal-merit');
   let riskBanner = '';
-  if (riskRes.length > 0 || overAllocRes.length > 0 || reassignRes.length > 0) {
+  if (riskRes.length > 0 || overAllocRes.length > 0 || reassignRes.length > 0 || internalMeritRes.length > 0) {
     riskBanner = '<div style="margin-bottom:0.75rem;padding:0.5rem 0.75rem;border-radius:0.5rem;font-size:0.75rem;border:1px solid var(--border2);background:var(--surface2)">';
+    if (internalMeritRes.length > 0) riskBanner += `<div style="color:#047857;font-weight:700;margin-bottom:0.125rem">&#9733; ${internalMeritRes.length} internal merit pool (onboard only): ${internalMeritRes.map(o=>{const avail=o.internalAvailableDate;const td=parseDate(S.todayDate);let lbl='date not set';if(avail){const ad=parseDate(avail);const wk=Math.floor(daysBetween(td,ad)/7);lbl=wk<=0?'available now':'avail in '+wk+'w';}return '<span style="font-weight:400">'+esc(o.name)+' ('+esc(o.role)+', '+lbl+')</span>';}).join(', ')}</div>`;
     if (overAllocRes.length > 0) riskBanner += `<div style="color:var(--red);font-weight:700;margin-bottom:0.125rem">&#9888; ${overAllocRes.length} assigned resource${overAllocRes.length!==1?'s':''} exceeding max FTE: ${overAllocRes.map(o=>'<span style="font-weight:400">'+esc(o.name)+' ('+getPeakAssignedFTE(o).peak.toFixed(2)+'/'+((o.maxFTE||1).toFixed(1))+' FTE)</span>').join(', ')}</div>`;
     if (riskRes.length > 0) riskBanner += `<div style="color:var(--amber);font-weight:700;margin-bottom:0.125rem">&#9888; ${riskRes.length} assigned resource${riskRes.length!==1?'s':''} at risk or ending soon: ${riskRes.map(o=>{const lbl=o.atRisk?'at risk':('ends '+o.endDate);return '<span style="font-weight:400">'+esc(o.name)+' ('+lbl+')</span>';}).join(', ')}</div>`;
     if (reassignRes.length > 0) riskBanner += `<div style="color:#7C3AED;font-weight:700">&#8635; ${reassignRes.length} resource${reassignRes.length!==1?'s':''} available for internal reassignment: ${reassignRes.map(o=>{const avail=o.reassignAvailableDate?o.reassignAvailableDate:'TBD';return '<span style="font-weight:400">'+esc(o.name)+' ('+o.role+', avail: '+avail+')</span>';}).join(', ')}</div>`;
@@ -3090,7 +3135,9 @@ function renderRecruitmentPlanner() {
       const isCovered = !needsRecruitment && (r.filled || (r.coveredFTE >= r.peak));
       const stdOK = r.stdRecruitBy > today, meritOK = r.meritRecruitBy > today;
       const coverColor = isCovered ? 'var(--green)' : r.coveredFTE > 0 ? 'var(--amber)' : 'var(--text3)';
-      const coverLabel = r.coveredFTE > 0 ? (r.assignedFTE > 0 && r.pipelineCount > 0 ? r.assignedFTE.toFixed(1) + '+' + r.pipelineCount : r.assignedFTE > 0 ? r.assignedFTE.toFixed(1) : r.pipelineCount + 'p') : '\u2014';
+      const totalPipeline = (r.pipelineCount || 0) + (r.internalMeritCount || 0);
+      const coverLabel = r.coveredFTE > 0 ? (r.assignedFTE > 0 && totalPipeline > 0 ? r.assignedFTE.toFixed(1) + '+' + totalPipeline : r.assignedFTE > 0 ? r.assignedFTE.toFixed(1) : totalPipeline + 'p') : '\u2014';
+      const coverTitle = `${r.assignedFTE.toFixed(1)} assigned, ${r.pipelineCount||0} in pipeline${r.internalMeritCount ? ', ' + r.internalMeritCount + ' internal' : ''}`;
       const obC = r.onboardWeeks >= 6 ? 'long' : r.onboardWeeks >= 4 ? 'medium' : 'short';
       const fnId = 'fn-'+pn.replace(/[^a-zA-Z0-9]/g,'')+'-'+r.role.replace(/[^a-zA-Z0-9]/g,'');
       const fnPopover = `<div id="${fnId}" class="leadtime-popover" style="display:none"><div style="font-weight:700;color:var(--accent);margin-bottom:0.375rem">Leadtime Breakdown</div><div style="font-size:0.75rem;color:var(--text);margin-bottom:0.5rem"><strong>First Needed:</strong> ${fmtDate(r.firstDate)} (Week ${r.firstWeek})</div><table style="font-size:0.6875rem;border-collapse:collapse;width:100%"><tr style="border-bottom:1px solid var(--border)"><td style="padding:0.25rem 0.375rem;font-weight:600">Standard</td><td style="padding:0.25rem 0.375rem">${S.recruitStandardWeeks}w recruit + ${r.onboardWeeks}w onboard</td><td style="padding:0.25rem 0.375rem;font-weight:700">${r.stdTotal}w</td><td style="padding:0.25rem 0.375rem;color:var(--text2)">${fmtDate(r.stdRecruitBy)}</td></tr><tr style="border-bottom:1px solid var(--border)"><td style="padding:0.25rem 0.375rem;font-weight:600">Merit Pool</td><td style="padding:0.25rem 0.375rem">${S.recruitMeritWeeks}w recruit + ${r.onboardWeeks}w onboard</td><td style="padding:0.25rem 0.375rem;font-weight:700">${r.meritTotal}w</td><td style="padding:0.25rem 0.375rem;color:var(--text2)">${fmtDate(r.meritRecruitBy)}</td></tr></table><div style="margin-top:0.375rem;font-size:0.6875rem;color:var(--text3)">Weeks from today: <strong style="color:var(--text)">${r.weeksUntil}w</strong></div><button onclick="this.parentElement.style.display='none'" style="position:absolute;top:0.25rem;right:0.375rem;background:none;border:none;color:var(--text3);cursor:pointer;font-size:0.875rem">&times;</button></div>`;
@@ -3119,21 +3166,32 @@ function renderRecruitmentPlanner() {
           }
         });
       }
-      // Feature 2: Internal merit pool candidates for unfilled roles
+      // Internal merit pool and reassignment candidates for unfilled roles
       let meritCandidatesHTML = '';
       if (!r.filled) {
-        const internalCandidates = (appData.resources || []).filter(res =>
+        // Internal merit pool resources (no recruitment leadtime needed)
+        const intMerit = r.internalMeritResources || [];
+        if (intMerit.length > 0) {
+          meritCandidatesHTML += `<div style="font-size:0.625rem;color:#047857;margin-top:0.125rem;padding:0.125rem 0.375rem;background:rgba(16,185,129,0.06);border:1px dashed rgba(4,120,87,0.25);border-radius:0.25rem" title="Internal candidates — onboarding only, no recruitment leadtime">&#9733; Internal: ${intMerit.map(c => {
+            const avail = c.internalAvailableDate ? fmtDateShort(parseDate(c.internalAvailableDate)) : 'TBD';
+            const td = parseDate(S.todayDate);
+            const ready = c.internalAvailableDate ? (parseDate(c.internalAvailableDate) <= td ? 'now' : Math.floor(daysBetween(td, parseDate(c.internalAvailableDate)) / 7) + 'w') : '?';
+            return '<strong>' + esc(c.name) + '</strong> (avail: ' + avail + ' — ' + ready + ')';
+          }).join(', ')}</div>`;
+        }
+        // Reassignment candidates (assigned resources flagged as available)
+        const reassignCandidates = (appData.resources || []).filter(res =>
           res.availableForReassignment && res.status === 'assigned' && res.role === r.role
         );
-        if (internalCandidates.length > 0) {
-          meritCandidatesHTML = `<div style="font-size:0.625rem;color:var(--accent);margin-top:0.125rem" title="Internal resources available for reassignment">\u21BB ${internalCandidates.map(c => {
+        if (reassignCandidates.length > 0) {
+          meritCandidatesHTML += `<div style="font-size:0.625rem;color:var(--accent);margin-top:0.125rem" title="Assigned resources available for reassignment">\u21BB ${reassignCandidates.map(c => {
             const avail = c.reassignAvailableDate ? fmtDateShort(parseDate(c.reassignAvailableDate)) : 'TBD';
             return esc(c.name) + ' (avail: ' + avail + ')';
           }).join(', ')}</div>`;
         }
       }
       const actionContent = r.action + (rowWarnings ? '<div style="margin-top:0.25rem;display:flex;flex-direction:column;gap:0.125rem;align-items:flex-start">' + rowWarnings.replace(/margin-right:0\.25rem/g, '') + '</div>' : '') + meritCandidatesHTML;
-      html += `<tr${r.filled ? ' style="opacity:0.6"' : ''}><td class="role-cell">${r.role}</td><td class="num-cell text-accent" style="font-weight:700">${r.peak.toFixed(1)}</td><td class="num-cell" style="font-weight:700;color:${coverColor}" title="${r.assignedFTE.toFixed(1)} assigned, ${r.pipelineCount} in pipeline">${coverLabel}</td><td class="num-cell"><span class="onboard-badge ${obC}">${r.onboardWeeks}w</span></td><td class="date-cell"><strong>${weekLabel(r.firstWeek)}</strong> ${fmtDateShort(r.firstDate)} <button class="leadtime-btn" onclick="toggleLeadtime('${fnId}',event)" title="View leadtime breakdown">&#9432;</button>${fnPopover}</td><td class="date-cell ${!isCovered && !stdOK ? 'overdue' : ''}">${isCovered ? '\u2014' : fmtDate(r.stdRecruitBy)}</td><td class="date-cell ${!isCovered && !meritOK && stdOK ? 'warning' : !isCovered && !meritOK ? 'overdue' : ''}">${isCovered ? '\u2014' : fmtDate(r.meritRecruitBy)}</td><td class="num-cell ${isCovered ? 'text-green' : r.weeksUntil < r.meritTotal ? 'text-red' : r.weeksUntil < r.stdTotal ? 'text-amber' : 'text-green'}" style="font-weight:700">${isCovered ? '\u2713' : r.weeksUntil + 'w'}</td><td><span class="status-pill ${r.statusClass}">${r.status}</span></td><td style="font-size:0.8125rem;color:var(--text2);max-width:18rem">${actionContent}</td></tr>`;
+      html += `<tr${r.filled ? ' style="opacity:0.6"' : ''}><td class="role-cell">${r.role}</td><td class="num-cell text-accent" style="font-weight:700">${r.peak.toFixed(1)}</td><td class="num-cell" style="font-weight:700;color:${coverColor}" title="${coverTitle}">${coverLabel}</td><td class="num-cell"><span class="onboard-badge ${obC}">${r.onboardWeeks}w</span></td><td class="date-cell"><strong>${weekLabel(r.firstWeek)}</strong> ${fmtDateShort(r.firstDate)} <button class="leadtime-btn" onclick="toggleLeadtime('${fnId}',event)" title="View leadtime breakdown">&#9432;</button>${fnPopover}</td><td class="date-cell ${!isCovered && !stdOK ? 'overdue' : ''}">${isCovered ? '\u2014' : fmtDate(r.stdRecruitBy)}</td><td class="date-cell ${!isCovered && !meritOK && stdOK ? 'warning' : !isCovered && !meritOK ? 'overdue' : ''}">${isCovered ? '\u2014' : fmtDate(r.meritRecruitBy)}</td><td class="num-cell ${isCovered ? 'text-green' : r.weeksUntil < r.meritTotal ? 'text-red' : r.weeksUntil < r.stdTotal ? 'text-amber' : 'text-green'}" style="font-weight:700">${isCovered ? '\u2713' : r.weeksUntil + 'w'}</td><td><span class="status-pill ${r.statusClass}">${r.status}</span></td><td style="font-size:0.8125rem;color:var(--text2);max-width:18rem">${actionContent}</td></tr>`;
     });
   });
   html += '</tbody>';
@@ -3197,7 +3255,7 @@ function renderResources() {
 
   // KPI cards
   const res=appData.resources;
-  const counts={assigned:0,'merit-pool':0,interviewing:0,offered:0,available:0};
+  const counts={assigned:0,'internal-merit':0,'merit-pool':0,interviewing:0,offered:0,available:0};
   let overAllocCount=0,atRiskCount=0,reassignCount=0;
   res.forEach(r=>{
     if(counts[r.status]!==undefined)counts[r.status]++;
@@ -3209,6 +3267,7 @@ function renderResources() {
   const kpiEl=document.getElementById('res-kpi-cards');
   if(kpiEl)kpiEl.innerHTML=[
     {l:'Assigned',v:counts.assigned,c:'green',clr:'var(--green)'},
+    {l:'Internal Merit',v:counts['internal-merit'],c:'',clr:'#047857'},
     {l:'Merit Pool',v:counts['merit-pool'],c:'',clr:'#7C3AED'},
     {l:'Interviewing',v:counts.interviewing,c:'amber',clr:'var(--amber)'},
     {l:'Offered',v:counts.offered,c:'',clr:'#0077B6'},
@@ -3264,7 +3323,7 @@ function renderResources() {
 
   listEl.innerHTML=filtered.map((r,idx)=>{
     const origIdx=res.indexOf(r);
-    const statusLabel={'assigned':'Assigned','merit-pool':'Merit Pool','interviewing':'Interviewing','offered':'Offered','available':'Available'};
+    const statusLabel={'assigned':'Assigned','internal-merit':'Internal Merit Pool','merit-pool':'Merit Pool','interviewing':'Interviewing','offered':'Offered','available':'Available'};
     const assignList=getAssignmentList(r);
     const totalAssignedFTE=assignList.reduce((s,a)=>s+a.fte,0);
     const peakInfo=getPeakAssignedFTE(r);
@@ -3285,7 +3344,7 @@ function renderResources() {
         <div style="display:flex;gap:0.375rem;align-items:center">
           <span class="pool-badge ${r.status}">${statusLabel[r.status]||r.status}</span>
           <select class="form-input" style="max-width:8rem;padding:0.1875rem 0.375rem;font-size:0.75rem" onchange="updateResourceField(${origIdx},'status',this.value)">
-            ${['available','merit-pool','interviewing','offered','assigned'].map(s=>`<option value="${s}" ${r.status===s?'selected':''}>${statusLabel[s]}</option>`).join('')}
+            ${['available','internal-merit','merit-pool','interviewing','offered','assigned'].map(s=>`<option value="${s}" ${r.status===s?'selected':''}>${statusLabel[s]}</option>`).join('')}
           </select>
           <select class="form-input" style="max-width:10rem;padding:0.1875rem 0.375rem;font-size:0.75rem" onchange="updateResourceField(${origIdx},'role',this.value);renderResources()">
             ${appData.roles.map(rl=>`<option value="${rl}" ${r.role===rl?'selected':''}>${rl}</option>`).join('')}
@@ -3315,6 +3374,11 @@ function renderResources() {
         ${burden.totalBurdenPct>0?`<span style="position:relative;cursor:pointer" onclick="this.querySelector('.burden-tip').classList.toggle('show')">Uplift: <strong>${burden.totalBurdenPct.toFixed(2)}%</strong> <span style="color:var(--accent)">&#9432;</span><span class="burden-tip">${Object.entries(burden.breakdown).map(([k,v])=>'<div style=\\"display:flex;justify-content:space-between;gap:1rem\\"><span>'+k+'</span><strong>'+v.toFixed(2)+'%</strong></div>').join('')}<div style="border-top:1px solid var(--border);margin-top:0.25rem;padding-top:0.25rem;display:flex;justify-content:space-between"><span style=\\"font-weight:700\\">Total</span><strong style=\\"color:var(--accent)\\">${burden.totalBurdenPct.toFixed(2)}%</strong></div></span></span>`:''}
         ${r.notes?`<span>${r.notes}</span>`:''}
       </div>
+      ${r.status==='internal-merit'?`<div style="display:flex;gap:1rem;font-size:0.75rem;color:#047857;margin-bottom:0.375rem;flex-wrap:wrap;align-items:center;padding:0.375rem 0.5rem;background:rgba(16,185,129,0.06);border:1px dashed rgba(4,120,87,0.3);border-radius:0.375rem">
+        <strong style="font-size:0.6875rem">&#9733; Internal candidate — no recruitment leadtime, onboarding only</strong>
+        <span title="Date this person becomes available for project assignment">Available from: <input class="form-input" type="date" value="${r.internalAvailableDate||''}" style="font-size:0.6875rem;padding:0.125rem 0.25rem;border-color:#047857" onchange="updateResourceField(${origIdx},'internalAvailableDate',this.value);renderResources()"></span>
+        ${r.internalAvailableDate?`<span style="font-weight:700">${(()=>{const ad=parseDate(r.internalAvailableDate);const td=parseDate(appData.settings.todayDate);const wk=Math.floor(daysBetween(td,ad)/7);return wk<=0?'Available now':'Available in '+wk+'w ('+fmtDateShort(ad)+')';})()}</span>`:'<span style="color:var(--amber)">Set available date</span>'}
+      </div>`:''}
       <div style="display:flex;gap:1rem;font-size:0.75rem;color:var(--text2);margin-bottom:0.375rem;flex-wrap:wrap;align-items:center">
         <span title="Known or expected end date">End date: <input class="form-input" type="date" value="${r.endDate||''}" style="font-size:0.6875rem;padding:0.125rem 0.25rem" onchange="updateResourceField(${origIdx},'endDate',this.value);renderResources()"></span>
         <label style="display:flex;align-items:center;gap:0.25rem;cursor:pointer" title="Flag resource as at risk of leaving (end date unknown)"><input type="checkbox" ${r.atRisk?'checked':''} onchange="updateResourceField(${origIdx},'atRisk',this.checked);renderResources()"> At Risk</label>
@@ -3390,7 +3454,7 @@ function addResource(){
   }
 
   if(!appData.resources)appData.resources=[];
-  appData.resources.push({id:'r'+Date.now(),name,role,status,resourceType,salary,dailyRate,state,maxFTE,endDate,atRisk,availableForReassignment:false,reassignAvailableDate:'',assignments:{},comments:[],notes});
+  appData.resources.push({id:'r'+Date.now(),name,role,status,resourceType,salary,dailyRate,state,maxFTE,endDate,atRisk,availableForReassignment:false,reassignAvailableDate:'',internalAvailableDate:'',assignments:{},comments:[],notes});
   document.getElementById('res-name').value='';document.getElementById('res-salary').value='';document.getElementById('res-rate').value='';document.getElementById('res-hourly').value='';document.getElementById('res-maxfte').value='1.0';document.getElementById('res-enddate').value='';document.getElementById('res-atrisk').checked=false;document.getElementById('res-notes').value='';
   schedSave();toast('Resource added: '+name,'info');
 }
