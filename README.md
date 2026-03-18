@@ -34,6 +34,7 @@ A single-file, browser-based resource planning tool designed for managing IT pro
 - Week-by-week demand vs supply chart
 - Role-level gap analysis highlighting shortfalls
 - Filters by contract status (committed demand vs all)
+- **Recruitment Status Summary**: clickable KPI cards for Filled, Ending, Over-committed, In Pipeline, Partial, On Track, Recruit Now, Urgent, and Overdue — each expandable to show role-level detail with resource names and warnings
 
 #### Gantt Chart
 - Visual timeline of all projects with colour-coded phase bars
@@ -55,10 +56,17 @@ A single-file, browser-based resource planning tool designed for managing IT pro
 - Separate "Potential Roles" section for Pipeline and Prospect projects (not counted for active recruitment)
 - Recruitment timeline aligned to project start dates
 - **First Needed popover**: click to see detailed breakdown of which project and phase drives each role's earliest demand date
+- **End-date aware recruitment**: when an assigned resource has a known end date, recruit-by dates are calculated from their departure date — the role shows as "Filled (ending)" with active recruitment timelines
+- **Over-allocation detection**: flags filled roles where the assigned resource exceeds their max FTE on a secondary role assignment, indicating a dedicated resource should be recruited
+- **Internal merit pool candidates**: unfilled roles show available-for-reassignment resources as potential internal candidates with their availability date
+- **Resource risk summary banner**: top-of-page summary of over-allocated, at-risk/ending, and reassignable resources
 
 #### Resource Management
 - Add and manage named resources with role, start date, end date, state, salary, and project assignment
 - **Multi-role assignments**: resources can be assigned to multiple roles across different projects (or multiple roles on the same project)
+- **Primary / Secondary role designation**: each assignment can be toggled between primary (PRI) and secondary (SEC) — secondary roles on over-allocated resources trigger recruitment warnings
+- **Resource end date & at-risk flag**: set a known departure date or flag a resource as "at risk" of leaving (date unknown) — reflected with visual badges and recruitment warnings
+- **Available for reassignment**: mark assigned resources as available for internal reassignment with an optional availability date — shown as candidates on the Recruitment page
 - **Time-aware over-allocation detection**: warns only when assigned roles actually overlap in time, respecting shared-phase logic
 - **No-planned-effort warnings**: highlights when a role is assigned to a project that has no FTE allocation for that role
 - Assignment blocked for non-contracted projects (shows warning)
@@ -172,6 +180,15 @@ All portfolio data is stored as JSON with the following top-level structure:
 }
 ```
 
+Each resource contains:
+- `role` — primary role designation
+- `status` — one of `available`, `merit-pool`, `interviewing`, `offered`, `assigned`
+- `endDate` — known departure date (ISO format, optional)
+- `atRisk` — boolean flag for resources that may leave (date unknown)
+- `availableForReassignment` — boolean flag for internal merit pool candidates
+- `reassignAvailableDate` — date the resource becomes available for reassignment
+- `assignments` — object of project assignments, each containing `[{role, fte, primary}]`
+
 Each project contains:
 - `contractStatus` — one of `contracted`, `highConfidence`, `pipeline`, `prospect`
 - `contractProbability` — win percentage (informational, does not multiply revenue)
@@ -193,7 +210,7 @@ Each project contains:
 - **Zero dependencies** — single HTML file with inline CSS and JavaScript
 - **No build step** — open the file and it works
 - **No server required** — runs entirely in the browser
-- **~5,000 lines** of vanilla HTML/CSS/JS
+- **~5,500 lines** of vanilla HTML/CSS/JS
 - Uses Google Fonts (Poppins, JetBrains Mono) loaded via CDN
 
 ## File Structure
